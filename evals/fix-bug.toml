@@ -1,0 +1,9 @@
+prompt = "The function add in calc.py is wrong. Fix it so that python3 test_calc.py passes."
+max_calls = 15
+[files]
+"calc.py" = "def add(a, b):\n    return a - b\n"
+"test_calc.py" = "from calc import add\nassert add(2, 3) == 5\nprint('ok')\n"
+[[checks]]
+type = "command_contains"
+run = "python3 test_calc.py"
+text = "ok"

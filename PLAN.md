@@ -86,8 +86,8 @@ Each one is small enough to finish in a few sessions, and each has a "learn" not
 | 6 | Builder: scaffold, test, branch, PR, undo | builds a small project end to end | the coding-agent workflow |
 | 7 | Ideator and general profiles, playbooks (markdown recipes) | gives scoped ideas and handles a college task | prompting and context management |
 | 8 | DONE (task store + resume): killed task resumes | a killed task resumes where it stopped | state and durability |
-| 9 | Eval harness: about 10 repeatable tasks with scores | you can tell if a change helped | how to measure agents |
-| 10 | MCP client, security and deploy profiles | uses an MCP server, runs a dry-run deploy | the ecosystem |
+| 9 | DONE: 4 eval tasks, `agentic eval` | you can tell if a change helped | how to measure agents |
+| 10 | PARTLY DONE: read-only MCP server done; deploy profile pending | uses an MCP server, runs a dry-run deploy | the ecosystem |
 
 **MVP is milestones 0 to 4.** That is a safe, working builder that you can already use for projects.
 

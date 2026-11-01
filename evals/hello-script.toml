@@ -1,0 +1,9 @@
+prompt = "Create hello.py that prints exactly: hello agent. Then run it to confirm."
+max_calls = 12
+[[checks]]
+type = "file_exists"
+path = "hello.py"
+[[checks]]
+type = "command_contains"
+run = "python3 hello.py"
+text = "hello agent"

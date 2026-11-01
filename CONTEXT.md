@@ -34,7 +34,8 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 | 5 Researcher web tools | done | `web_search` (DuckDuckGo HTML, no key) and `fetch_url`; NETWORK risk so always asks; output untrusted and taints the gate; SSRF guard (public http(s) only, redirects re-checked); 1 MB cap; 24h disk cache. Verified live. Researcher profile now `ask-on-write` mode (readonly would deny network) |
 | 6 Budgets, memory, resume | done | `store.py` (SQLite at `~/.local/state/agentic/agentic.db`): per-provider `daily_calls` cap (router skips a provider once spent, falls through to the next), token usage, `agentic usage`; every task saved after each step, `agentic tasks`, `agentic resume <id>` (drops a half-finished tool turn). Loop now defaults reply role to assistant |
 | 7 Daemon and web UI | done | `server.py` (stdlib `http.server`, no new deps): `agentic serve` binds 127.0.0.1 only, random token (file mode 600, also in the URL hash), Host-header check against DNS rebinding, JSON API + long-poll events (not SSE), approvals via the UI's Approve/Deny buttons (10 min timeout = deny); single-file UI at `ui/index.html` (dark/light, mobile-friendly). Tested end to end with a scripted router, plus a live smoke test |
-| 8 Editor integration and eval | next | MCP server exposing the tools, eval harness of repeatable tasks, optional thin VS Code extension |
+| 8 MCP and evals | done | `mcp_server.py`: stdio MCP server (`agentic mcp --workspace .`) exposing only read-only tools (read_file, list_dir, repo_map), redacted and confined, so VS Code or Antigravity can pull project context but never write; `evals.py` + `evals/*.toml` (4 tasks: create script, fix bug, read and report, refuse to leak `.env`) with `agentic eval`; runs auto-approved in a temp workspace |
+| 9 Deploy profile, Anthropic adapter, LLM-classifier option | next | deploy checklist profile with dry run first; optional native Anthropic provider; optional model-based profile routing |
 
 ## Where things live
 - `src/agentic/loop.py`: the agent loop and `Profile`
@@ -46,15 +47,21 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 - `src/agentic/orchestrator.py`: profile selection
 - `src/agentic/server.py`, `ui/index.html`: local daemon and web UI
 - `src/agentic/store.py`: SQLite usage and tasks
-- `tests/test_core.py`: 24 tests (`tests/test_core.py`, `tests/test_server.py`) (run `.venv/bin/pytest`)
+- `src/agentic/mcp_server.py`: read-only MCP server for editors
+- `src/agentic/evals.py`, `evals/`: eval harness and tasks
+- `tests/test_core.py`: 29 tests (`test_core.py`, `test_server.py`, `test_evals_mcp.py`) (run `.venv/bin/pytest`)
 
 ## Known gaps and notes
+- The evals have only been run with scripted fake models; real pass rates are unknown until a real model is connected.
 - Not yet run against a real model (no key or Ollama yet). Everything is covered by mocked tests.
 - `openrouter/free` as the default model name is unverified; change it to a real `:free` model.
 - The sandbox restricts writes and network, not reads. Each shell command still asks for approval.
 - The sandbox only works on macOS.
 - `web_search` scrapes DuckDuckGo's HTML page, which can change layout or rate-limit; swap in SearXNG or a keyed API later if it breaks.
 - Orchestrator is keyword-based; an LLM classifier is an optional later upgrade.
+
+## Using it with VS Code / Antigravity
+No integration is required: run `agentic` in the editor terminal, or open the web UI beside it; edits land on disk and the editor reloads them. For context inside the editor's own AI, add an MCP server with command `/abs/path/.venv/bin/agentic` and args `mcp --workspace /abs/path/to/project` (read-only; check your editor's MCP settings for the exact file).
 
 ## How to run
 ```

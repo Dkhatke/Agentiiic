@@ -1,0 +1,8 @@
+prompt = "Read notes.txt and write the number of words in it to count.txt (digits only)."
+max_calls = 10
+[files]
+"notes.txt" = "one two three four five"
+[[checks]]
+type = "file_contains"
+path = "count.txt"
+text = "5"

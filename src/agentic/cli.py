@@ -75,6 +75,33 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    from .evals import load_tasks, run_task
+    cfg = load_config()
+    router = Router(cfg.providers, store=Store())
+    profile = load_profile(args.profile)
+    tasks = load_tasks(Path(args.dir))
+    if args.only:
+        tasks = [t for t in tasks if t["name"] in args.only]
+    passed = 0
+    for t in tasks:
+        try:
+            r = run_task(t, profile, router)
+        except RouterError as e:
+            print(f"ERR   {t['name']}: {e}")
+            continue
+        passed += r.passed
+        print(f"{'PASS' if r.passed else 'FAIL'}  {r.name:22} {r.model_calls:3} model calls  " + "; ".join(r.failures))
+    print(f"\n{passed}/{len(tasks)} passed")
+    return 0 if passed == len(tasks) else 1
+
+
+def cmd_mcp(args) -> int:
+    from .mcp_server import serve
+    serve(Path(args.workspace))
+    return 0
+
+
 def cmd_providers(_) -> int:
     for p in load_config().providers:
         print(f"{'ok ' if p.usable else 'no '} {p.name:12} {p.model}  ({p.base_url})"
@@ -109,6 +136,14 @@ def main(argv: list[str] | None = None) -> int:
     sv = sub.add_parser("serve", help="start the local web UI and API")
     sv.add_argument("--port", type=int, default=8765)
     sv.set_defaults(fn=cmd_serve)
+    ev = sub.add_parser("eval", help="run the eval tasks against the configured providers")
+    ev.add_argument("--dir", default="evals")
+    ev.add_argument("--profile", default="builder")
+    ev.add_argument("--only", nargs="*")
+    ev.set_defaults(fn=cmd_eval)
+    mc = sub.add_parser("mcp", help="MCP server (stdio, read-only tools) for editors")
+    mc.add_argument("--workspace", default=".")
+    mc.set_defaults(fn=cmd_mcp)
     sub.add_parser("tasks", help="list recent tasks").set_defaults(fn=cmd_tasks)
     sub.add_parser("usage", help="today's provider usage").set_defaults(fn=cmd_usage)
     sub.add_parser("providers", help="show configured providers").set_defaults(fn=cmd_providers)
