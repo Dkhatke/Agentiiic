@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "type": "command",
+        "command": "\"/opt/homebrew/bin/node\" \"/Users/dnyaneshwarivijaykumarkhatke/.vscode/extensions/kamalpulaparthi.notifier-0.3.1/bin/notifier.js\" dispatch cursor",
+        "timeout": 10
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "command": "\"/opt/homebrew/bin/node\" \"/Users/dnyaneshwarivijaykumarkhatke/.vscode/extensions/kamalpulaparthi.notifier-0.3.1/bin/notifier.js\" dispatch cursor",
+        "timeout": 10
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "type": "command",
+        "command": "\"/opt/homebrew/bin/node\" \"/Users/dnyaneshwarivijaykumarkhatke/.vscode/extensions/kamalpulaparthi.notifier-0.3.1/bin/notifier.js\" dispatch cursor",
+        "timeout": 10
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "type": "command",
+        "command": "\"/opt/homebrew/bin/node\" \"/Users/dnyaneshwarivijaykumarkhatke/.vscode/extensions/kamalpulaparthi.notifier-0.3.1/bin/notifier.js\" dispatch cursor",
+        "timeout": 10
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "type": "command",
+        "command": "\"/opt/homebrew/bin/node\" \"/Users/dnyaneshwarivijaykumarkhatke/.vscode/extensions/kamalpulaparthi.notifier-0.3.1/bin/notifier.js\" dispatch cursor",
+        "timeout": 10
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "type": "command",
+        "command": "\"/opt/homebrew/bin/node\" \"/Users/dnyaneshwarivijaykumarkhatke/.vscode/extensions/kamalpulaparthi.notifier-0.3.1/bin/notifier.js\" dispatch cursor",
+        "timeout": 10
+      }
+    ]
+  }
+}
