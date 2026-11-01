@@ -11,6 +11,7 @@ from .permissions import Gate, Mode
 from .orchestrator import select_profile
 from .profiles import all_profiles, load_profile
 from .router import Router, RouterError
+from .store import Store
 from .tools import ToolContext, default_registry
 
 
@@ -23,17 +24,48 @@ def cmd_run(args) -> int:
     profile = select_profile(args.task) if args.profile == "auto" else load_profile(args.profile)
     print(f"profile: {profile.name}")
     mode = Mode(args.mode or profile.mode or "ask-on-write")
-    router = Router(cfg.providers)
+    store = Store()
+    router = Router(cfg.providers, store=store)
+    task_id, messages = args.task_id, args.messages
+    if task_id is None:
+        task_id = store.create_task(args.task, profile.name, str(Path(args.workspace).resolve()))
+    print(f"task #{task_id}  (resume later with: agentic resume {task_id})")
     ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout,
                       cfg.sandbox.enabled, cfg.sandbox.network)
     profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
     try:
         out = run(args.task, profile, router, default_registry(), Gate(mode, _ask), ctx,
-                  Audit(), cfg.limits.max_model_calls, on_event=lambda e: print(f"  · {e}"))
+                  Audit(), cfg.limits.max_model_calls, on_event=lambda e: print(f"  · {e}"),
+                  store=store, task_id=task_id, messages=messages)
     except RouterError as e:
         print(f"error: {e}")
         return 1
     print(f"\n{out}")
+    return 0
+
+
+def cmd_resume(args) -> int:
+    t = Store().load_task(args.id)
+    if not t:
+        print(f"no task #{args.id}")
+        return 1
+    args.task, args.profile, args.workspace = t["task"], t["profile"], t["workspace"]
+    args.task_id, args.messages = t["id"], t["messages"]
+    return cmd_run(args)
+
+
+def cmd_tasks(_) -> int:
+    for tid, status, profile, task in Store().list_tasks():
+        print(f"#{tid:<4} {status:8} {profile:10} {task[:70]}")
+    return 0
+
+
+def cmd_usage(_) -> int:
+    rows = Store().usage_today()
+    for name, calls, tokens in rows:
+        print(f"{name:12} {calls:5} calls  {tokens:8} tokens")
+    if not rows:
+        print("no usage today")
     return 0
 
 
@@ -63,7 +95,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--profile", default="auto", help="auto, or one of: " + ", ".join(p.name for p in all_profiles()))
     r.add_argument("--workspace", default=".")
     r.add_argument("--mode", default=None, choices=[m.value for m in Mode])
-    r.set_defaults(fn=cmd_run)
+    r.set_defaults(fn=cmd_run, task_id=None, messages=None)
+    rs = sub.add_parser("resume", help="continue a saved task")
+    rs.add_argument("id", type=int)
+    rs.add_argument("--mode", default=None, choices=[m.value for m in Mode])
+    rs.set_defaults(fn=cmd_resume)
+    sub.add_parser("tasks", help="list recent tasks").set_defaults(fn=cmd_tasks)
+    sub.add_parser("usage", help="today's provider usage").set_defaults(fn=cmd_usage)
     sub.add_parser("providers", help="show configured providers").set_defaults(fn=cmd_providers)
     sub.add_parser("init", help="write a sample config").set_defaults(fn=cmd_init)
     args = ap.parse_args(argv)

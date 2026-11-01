@@ -28,11 +28,12 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 |---|---|---|
 | 0 Skeleton | done | package layout, config, CLI (`init`, `providers`, `run`), tests |
 | 1 Loop and tools | done | agent loop with step and model-call caps; read, list, write, edit, shell tools; permission gate (ask-all, ask-on-write, readonly); JSONL audit log |
-| 2 Router | mostly done | ordered fallback, cooldown on 401/403/429/5xx/unreachable, text tool mode. **Pending:** per-key daily budgets and a usage view |
+| 2 Router | done | ordered fallback, cooldown on 401/403/429/5xx/unreachable, text tool mode. **Budgets and usage view added in phase 6 |
 | 3 Safety | done | secret redaction (output and audit), protected files (.env, keys), untrusted-data wrapping and taint that disables auto-approved shell, macOS sandbox (writes confined to the workspace, no network by default) |
 | 4 Profiles and orchestrator | done | profiles builder, researcher, ideator, general, security; keyword orchestrator (`--profile auto`); `repo_map`, `git_branch`, `git_commit` (refuses main/master); read-only profiles default to `readonly` mode |
 | 5 Researcher web tools | done | `web_search` (DuckDuckGo HTML, no key) and `fetch_url`; NETWORK risk so always asks; output untrusted and taints the gate; SSRF guard (public http(s) only, redirects re-checked); 1 MB cap; 24h disk cache. Verified live. Researcher profile now `ask-on-write` mode (readonly would deny network) |
-| 6 Builder polish and memory | next | per-key daily budgets and usage view, task memory (SQLite), checkpoints and resume |
+| 6 Budgets, memory, resume | done | `store.py` (SQLite at `~/.local/state/agentic/agentic.db`): per-provider `daily_calls` cap (router skips a provider once spent, falls through to the next), token usage, `agentic usage`; every task saved after each step, `agentic tasks`, `agentic resume <id>` (drops a half-finished tool turn). Loop now defaults reply role to assistant |
+| 7 Daemon and web UI | next | local HTTP+SSE server on 127.0.0.1 with a local token, small static UI with approval buttons |
 
 ## Where things live
 - `src/agentic/loop.py`: the agent loop and `Profile`
@@ -42,7 +43,7 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 - `src/agentic/safety/`: redaction and sandbox
 - `src/agentic/profiles/*.toml`: agent profiles
 - `src/agentic/orchestrator.py`: profile selection
-- `tests/test_core.py`: 18 tests (run `.venv/bin/pytest`)
+- `tests/test_core.py`: 20 tests (run `.venv/bin/pytest`)
 
 ## Known gaps and notes
 - Not yet run against a real model (no key or Ollama yet). Everything is covered by mocked tests.

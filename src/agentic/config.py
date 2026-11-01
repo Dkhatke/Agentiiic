@@ -18,6 +18,7 @@ name = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "openrouter/free"          # change to any ':free' model from openrouter.ai/models
+daily_calls = 200                  # stay inside the free tier; omit for no cap
 
 [[providers]]
 name = "ollama"
@@ -42,6 +43,7 @@ class Provider:
     base_url: str
     model: str
     api_key_env: str | None = None
+    daily_calls: int | None = None  # skip this provider once it has been called this many times today
     tool_mode: str = "native"  # "native" = API tool-calling; "text" = works with any model
 
     @property

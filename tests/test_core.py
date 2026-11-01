@@ -251,3 +251,36 @@ def test_network_tools_always_ask(tmp_path):
     gate = Gate(Mode.ASK_ON_WRITE, lambda s: False)
     assert gate.allow(reg.get("fetch_url"), {"url": "http://x"})[0] is False
     assert Gate(Mode.READONLY, lambda s: True).allow(reg.get("fetch_url"), {})[0] is False
+
+
+def test_daily_budget_skips_provider(tmp_path):
+    from agentic.store import Store
+    store = Store(tmp_path / "db.sqlite")
+    hits = []
+
+    def handler(req):
+        hits.append(str(req.url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}], "usage": {"total_tokens": 7}})
+
+    providers = [Provider("a", "http://a/v1", "m", daily_calls=2), Provider("b", "http://b/v1", "m")]
+    r = Router(providers, httpx.Client(transport=httpx.MockTransport(handler)), store=store)
+    assert [r.chat([]).provider for _ in range(4)] == ["a", "a", "b", "b"]
+    assert store.calls_today("a") == 2 and dict((n, t) for n, c, t in store.usage_today())["a"] == 14
+
+
+def test_task_saved_and_resumable(tmp_path):
+    from agentic.store import Store
+    store = Store(tmp_path / "db.sqlite")
+    tid = store.create_task("t", "builder", str(tmp_path))
+    router = ScriptedRouter([tool_msg("read_file", {"path": "a.txt"}), {"content": "done"}])
+    (tmp_path / "a.txt").write_text("hello")
+    run("t", profile(), router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path),
+        Audit(tmp_path / "audit.jsonl"), store=store, task_id=tid)
+    saved = store.load_task(tid)
+    assert saved["status"] == "done" and any(m["role"] == "tool" for m in saved["messages"])
+    # crash mid-step: trailing assistant tool-call without results is dropped on resume
+    msgs = saved["messages"][:-1] + [{"role": "assistant", **tool_msg("read_file", {"path": "a.txt"})}]
+    router2 = ScriptedRouter([{"content": "resumed"}])
+    out = run("t", profile(), router2, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path),
+              Audit(tmp_path / "audit.jsonl"), store=store, task_id=tid, messages=msgs)
+    assert out == "resumed"

@@ -26,7 +26,8 @@ class Reply:
 
 class Router:
     def __init__(self, providers: list[Provider], client: httpx.Client | None = None,
-                 cooldown: float = 60.0, clock=time.monotonic):
+                 cooldown: float = 60.0, clock=time.monotonic, store=None):
+        self.store = store
         self.providers = [p for p in providers if p.usable]
         self.client = client or httpx.Client(timeout=120)
         self.cooldown = cooldown
@@ -42,6 +43,9 @@ class Router:
             if self._blocked_until.get(p.name, 0) > self.clock():
                 errors.append(f"{p.name}: cooling down")
                 continue
+            if self.store and p.daily_calls and self.store.calls_today(p.name) >= p.daily_calls:
+                errors.append(f"{p.name}: daily budget reached")
+                continue
             try:
                 return self._call(p, messages, tools)
             except _Skip as e:
@@ -56,6 +60,8 @@ class Router:
             body["tools"] = tools
         headers = {"Authorization": f"Bearer {p.api_key}"} if p.api_key else {}
         self.calls += 1
+        if self.store:
+            self.store.add_usage(p.name, calls=1)
         try:
             r = self.client.post(f"{p.base_url.rstrip('/')}/chat/completions", json=body, headers=headers)
         except httpx.HTTPError as e:
@@ -69,7 +75,10 @@ class Router:
             msg = data["choices"][0]["message"]
         except (KeyError, IndexError) as e:
             raise _Skip("malformed response") from e
-        return Reply(parse_reply(msg) if text_mode else msg, p.name, data.get("usage") or {})
+        usage = data.get("usage") or {}
+        if self.store and usage.get("total_tokens"):
+            self.store.add_usage(p.name, tokens=int(usage["total_tokens"]))
+        return Reply(parse_reply(msg) if text_mode else msg, p.name, usage)
 
 
 class _Skip(Exception):

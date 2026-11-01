@@ -79,13 +79,13 @@ Each one is small enough to finish in a few sessions, and each has a "learn" not
 |---|---|---|---|
 | 0 | DONE: skeleton, config, tests | `agentic --help` works | project layout |
 | 1 | DONE: loop, read/list/write/edit/shell tools, permission gate | it edits a file only after you approve | what an agent loop really is |
-| 2 | PARTLY DONE: ordered fallback + cooldown + call cap done; per-key daily budgets and usage view pending | it survives a rate limit by switching provider | free-tier engineering |
+| 2 | DONE: ordered fallback, cooldown, daily_calls budget, usage view | it survives a rate limit by switching provider | free-tier engineering |
 | 3 | DONE: sandbox-exec shell, redaction, protected files, untrusted-data tainting | a malicious file can't make it run a command unasked | agent security |
 | 4 | DONE: profiles (builder, researcher, ideator, general, security), keyword orchestrator, repo_map, git tools | the same engine behaves as builder or researcher | agents as config |
 | 5 | DONE: web_search, fetch_url, SSRF guard, cache | researcher profile can search and cite | tool use and RAG basics |
 | 6 | Builder: scaffold, test, branch, PR, undo | builds a small project end to end | the coding-agent workflow |
 | 7 | Ideator and general profiles, playbooks (markdown recipes) | gives scoped ideas and handles a college task | prompting and context management |
-| 8 | Memory, checkpoints, resume | a killed task resumes where it stopped | state and durability |
+| 8 | DONE (task store + resume): killed task resumes | a killed task resumes where it stopped | state and durability |
 | 9 | Eval harness: about 10 repeatable tasks with scores | you can tell if a change helped | how to measure agents |
 | 10 | MCP client, security and deploy profiles | uses an MCP server, runs a dry-run deploy | the ecosystem |
 
