@@ -55,7 +55,7 @@ def test_router_falls_back_and_cools_down():
 
 def test_router_all_fail():
     r = Router([Provider("a", "http://x/v1", "m")],
-               httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500))))
+               httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500))), sleep=lambda s: None)
     with pytest.raises(RouterError):
         r.chat([])
 
@@ -320,3 +320,94 @@ def test_shell_refuses_protected_files(tmp_path):
             run_shell(ctx(tmp_path), cmd)
     assert "exit=0" in run_shell(ctx(tmp_path), "echo environment variables")
     assert "exit=0" in run_shell(ctx(tmp_path), "ls")
+
+
+def test_compaction_and_stuck_detection(tmp_path):
+    from agentic.loop import compact, CONTEXT_CHARS
+    msgs = [{"role": "system", "content": "s"}] + [{"role": "tool", "content": "x" * 20000} for _ in range(4)] \
+        + [{"role": "user", "content": "recent"}] * 6
+    compact(msgs)
+    assert len(msgs[1]["content"]) < 500 and msgs[-1]["content"] == "recent"
+    small = [{"role": "tool", "content": "y" * 100}]
+    compact(small)
+    assert small[0]["content"] == "y" * 100
+    # same call 4 times: the 3rd and later are refused
+    router = ScriptedRouter([tool_msg("read_file", {"path": "nope"})] * 4 + [{"content": "gave up"}])
+    audit = Audit(tmp_path / "audit.jsonl")
+    out = run("t", Profile("t", "sys", ["read_file"], max_steps=8), router, default_registry(),
+              Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), audit)
+    assert out == "gave up" and "stuck" in (tmp_path / "audit.jsonl").read_text()
+
+
+def test_quota_group_shared_across_providers(tmp_path):
+    from agentic.store import Store
+    store = Store(tmp_path / "db.sqlite")
+
+    def handler(req):
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    ps = [Provider("a", "http://a/v1", "m", quota="g", daily_calls=2), Provider("b", "http://b/v1", "m", quota="g", daily_calls=2),
+          Provider("c", "http://c/v1", "m")]
+    r = Router(ps, httpx.Client(transport=httpx.MockTransport(handler)), store=store)
+    assert [r.chat([]).provider for _ in range(4)] == ["a", "a", "c", "c"]  # b never runs: the shared group is spent
+
+
+def test_grep_tool(tmp_path):
+    from agentic.tools.dev import grep
+    (tmp_path / "a.py").write_text("def foo():\n    return 1\n")
+    (tmp_path / ".env").write_text("foo=secret")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "x.js").write_text("foo")
+    out = grep(ctx(tmp_path), r"def foo")
+    assert "a.py:1:" in out and ".env" not in out and "node_modules" not in out
+    assert grep(ctx(tmp_path), "foo") .count("\n") == 0       # only a.py matches
+    assert grep(ctx(tmp_path), "zzz") == "no matches"
+    with pytest.raises(ToolError):
+        grep(ctx(tmp_path), "(")
+
+
+def test_env_note_in_system_prompt(tmp_path):
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[0]["content"])
+            return super().chat(messages, tools)
+    run("t", profile(), Spy([{"content": "ok"}]), default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True),
+        ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert "Environment:" in seen[0] and "python3" in seen[0] and "not a git repository" in seen[0]
+
+
+def test_provider_specific_fields_are_not_replayed(tmp_path):
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append([dict(m) for m in messages])
+            return super().chat(messages, tools)
+    first = tool_msg("read_file", {"path": "a.txt"}) | {"reasoning_details": [{"x": 1}], "reasoning": "hmm", "refusal": None}
+    (tmp_path / "a.txt").write_text("x")
+    run("t", profile(), Spy([first, {"content": "done"}]), default_registry(),
+        Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assistant = [m for m in seen[1] if m["role"] == "assistant"][0]
+    assert set(assistant) <= {"role", "content", "tool_calls"}
+
+
+def test_router_waits_and_retries_transient_failures_only():
+    sleeps, state = [], {"n": 0}
+
+    def handler(req):
+        state["n"] += 1
+        return httpx.Response(429) if state["n"] == 1 else httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    clock = {"t": 0.0}
+    r = Router([Provider("a", "http://a/v1", "m")], httpx.Client(transport=httpx.MockTransport(handler)),
+               cooldown=10, clock=lambda: clock["t"], sleep=lambda s: (sleeps.append(s), clock.__setitem__("t", clock["t"] + s)))
+    assert r.chat([]).message["content"] == "hi" and len(sleeps) == 1 and 10 <= sleeps[0] <= 11
+    # bad key (401) is not retried
+    r2 = Router([Provider("a", "http://a/v1", "m")], httpx.Client(transport=httpx.MockTransport(lambda q: httpx.Response(401))),
+                sleep=lambda s: sleeps.append(s))
+    n = len(sleeps)
+    with pytest.raises(RouterError):
+        r2.chat([])
+    assert len(sleeps) == n

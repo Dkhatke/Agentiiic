@@ -5,7 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .builtin import _S, _clip, _obj
+from .builtin import PROTECTED, _S, _clip, _obj
 from .registry import Registry, Risk, Tool, ToolContext, ToolError
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".pytest_cache"}
@@ -36,6 +36,30 @@ def repo_map(ctx: ToolContext, path: str = ".") -> str:
                 if pat.match(line):
                     lines.append("    " + line.strip()[:100])
     return _clip("\n".join(lines) or "(empty)")
+
+
+def grep(ctx: ToolContext, pattern: str, path: str = ".") -> str:
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        raise ToolError(f"bad regex: {e}") from e
+    base = ctx.resolve(path)
+    hits = []
+    for f in sorted(base.rglob("*") if base.is_dir() else [base]):
+        if not f.is_file() or any(p in SKIP_DIRS for p in f.relative_to(ctx.root).parts):
+            continue
+        if PROTECTED.search(str(f)) or f.stat().st_size > 500_000:
+            continue
+        try:
+            lines = f.read_text().splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for n, line in enumerate(lines, 1):
+            if rx.search(line):
+                hits.append(f"{f.relative_to(ctx.root)}:{n}: {line.strip()[:160]}")
+                if len(hits) >= 100:
+                    return "\n".join(hits) + "\n...[stopped at 100 matches, narrow the pattern or path]"
+    return "\n".join(hits) or "no matches"
 
 
 def _git(ctx: ToolContext, *args: str) -> str:
@@ -77,6 +101,8 @@ def semantic_search(ctx: ToolContext, query: str) -> str:
 
 
 def register(reg: Registry) -> None:
+    reg.register(Tool("grep", "Search files for a regex; returns file:line: text.",
+                      _obj({"pattern": _S, "path": _S}, ["pattern"]), Risk.READ, grep, untrusted=True))
     reg.register(Tool("semantic_search", "Find the code or text most related to a query by meaning (sends file text to the embeddings provider).",
                       _obj({"query": _S}, ["query"]), Risk.NETWORK, semantic_search, untrusted=True))
     reg.register(Tool("load_playbook", "Load a step-by-step recipe (call with no name to list them).",

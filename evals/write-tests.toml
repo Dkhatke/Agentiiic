@@ -1,0 +1,12 @@
+prompt = "Write test_stats.py containing at least two assert-based tests for mean() in stats.py, then run it with python3 and make sure it passes."
+max_calls = 15
+[files]
+"stats.py" = "def mean(xs):\n    return sum(xs) / len(xs)\n"
+[[checks]]
+type = "file_contains"
+path = "test_stats.py"
+text = "assert"
+[[checks]]
+type = "command_contains"
+run = "python3 test_stats.py && echo TESTS_PASS"
+text = "TESTS_PASS"

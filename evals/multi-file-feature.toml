@@ -1,0 +1,13 @@
+prompt = "In this small project, add a function `multiply(a, b)` to calc.py and make main.py print the result of multiply(6, 7). Then run main.py."
+max_calls = 15
+[files]
+"calc.py" = "def add(a, b):\n    return a + b\n"
+"main.py" = "from calc import add\nprint(add(1, 2))\n"
+[[checks]]
+type = "command_contains"
+run = "python3 main.py"
+text = "42"
+[[checks]]
+type = "file_contains"
+path = "calc.py"
+text = "def add"

@@ -29,24 +29,32 @@ model = "qwen/qwen3.8-27b"   # fallback
 
 [[providers]]
 name = "or-coder"
+quota = "openrouter"
+daily_calls = 45                   # OpenRouter free tier: 50 requests/day per account
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "cohere/north-mini-code:free"   # coding-agent model, 256K context
 
 [[providers]]
 name = "or-gemma"
+quota = "openrouter"
+daily_calls = 45                   # OpenRouter free tier: 50 requests/day per account
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "google/gemma-4-31b-it:free"   # strong general model, native function calling
 
 [[providers]]
 name = "or-nemotron"
+quota = "openrouter"
+daily_calls = 45                   # OpenRouter free tier: 50 requests/day per account
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "nvidia/nemotron-3.5-lightning:free"   # fast, 1M context
 
 [[providers]]
 name = "or-auto"
+quota = "openrouter"
+daily_calls = 45                   # OpenRouter free tier: 50 requests/day per account
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "openrouter/free"   # OpenRouter picks any available free model
@@ -78,7 +86,8 @@ class Provider:
     base_url: str
     model: str
     api_key_env: str | None = None
-    daily_calls: int | None = None  # skip this provider once it has been called this many times today
+    daily_calls: int | None = None  # skip this provider once its quota group has been called this many times today
+    quota: str | None = None        # shared quota group (e.g. all OpenRouter free models share one account limit)
     tool_mode: str = "native"  # "native" = API tool-calling; "text" = works with any model
 
     @property
