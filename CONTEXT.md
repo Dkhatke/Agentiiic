@@ -31,23 +31,25 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 | 2 Router | mostly done | ordered fallback, cooldown on 401/403/429/5xx/unreachable, text tool mode. **Pending:** per-key daily budgets and a usage view |
 | 3 Safety | done | secret redaction (output and audit), protected files (.env, keys), untrusted-data wrapping and taint that disables auto-approved shell, macOS sandbox (writes confined to the workspace, no network by default) |
 | 4 Profiles and orchestrator | done | profiles builder, researcher, ideator, general, security; keyword orchestrator (`--profile auto`); `repo_map`, `git_branch`, `git_commit` (refuses main/master); read-only profiles default to `readonly` mode |
-| 5 Researcher web tools | next | `web_search`, `fetch_url` (network risk, untrusted output, domain allowlist), research cache |
+| 5 Researcher web tools | done | `web_search` (DuckDuckGo HTML, no key) and `fetch_url`; NETWORK risk so always asks; output untrusted and taints the gate; SSRF guard (public http(s) only, redirects re-checked); 1 MB cap; 24h disk cache. Verified live. Researcher profile now `ask-on-write` mode (readonly would deny network) |
+| 6 Builder polish and memory | next | per-key daily budgets and usage view, task memory (SQLite), checkpoints and resume |
 
 ## Where things live
 - `src/agentic/loop.py`: the agent loop and `Profile`
 - `src/agentic/router.py`, `textmode.py`: providers, fallback, text tool protocol
 - `src/agentic/permissions.py`: the gate
-- `src/agentic/tools/`: registry plus built-in and dev tools
+- `src/agentic/tools/`: registry plus built-in, dev (`dev.py`) and web (`web.py`) tools
 - `src/agentic/safety/`: redaction and sandbox
 - `src/agentic/profiles/*.toml`: agent profiles
 - `src/agentic/orchestrator.py`: profile selection
-- `tests/test_core.py`: 15 tests (run `.venv/bin/pytest`)
+- `tests/test_core.py`: 18 tests (run `.venv/bin/pytest`)
 
 ## Known gaps and notes
 - Not yet run against a real model (no key or Ollama yet). Everything is covered by mocked tests.
 - `openrouter/free` as the default model name is unverified; change it to a real `:free` model.
 - The sandbox restricts writes and network, not reads. Each shell command still asks for approval.
 - The sandbox only works on macOS.
+- `web_search` scrapes DuckDuckGo's HTML page, which can change layout or rate-limit; swap in SearXNG or a keyed API later if it breaks.
 - Orchestrator is keyword-based; an LLM classifier is an optional later upgrade.
 
 ## How to run

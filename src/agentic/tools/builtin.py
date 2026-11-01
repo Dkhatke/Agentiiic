@@ -86,4 +86,6 @@ def default_registry() -> Registry:
     reg.register(Tool("run_shell", "Run a shell command in the workspace.", _obj({"command": _S}, ["command"]), Risk.DESTRUCTIVE, run_shell, _shell_risk))
     from . import dev
     dev.register(reg)
+    from . import web
+    web.register(reg)
     return reg

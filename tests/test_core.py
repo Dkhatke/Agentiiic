@@ -184,7 +184,7 @@ def test_orchestrator_selects_profiles():
 def test_security_and_research_profiles_are_readonly():
     from agentic.profiles import all_profiles
     ro = {p.name for p in all_profiles() if p.mode == "readonly"}
-    assert {"security", "researcher", "ideator"} <= ro
+    assert {"security", "ideator"} <= ro
     reg = default_registry()
     for p in all_profiles():
         for t in p.tools:
@@ -208,3 +208,46 @@ def test_repo_map_and_commit_guard(tmp_path):
     assert "x" in git_commit(ctx(tmp_path), "x")
     with pytest.raises(ToolError):
         git_branch(ctx(tmp_path), "--evil")
+
+
+def test_web_ssrf_guard_and_fetch(tmp_path, monkeypatch):
+    from agentic.tools import web
+    monkeypatch.setattr(web, "STATE_DIR", tmp_path)
+    for bad in ("file:///etc/passwd", "http://127.0.0.1/", "http://169.254.169.254/latest/meta-data"):
+        with pytest.raises(ToolError):
+            web.check_url(bad)
+    monkeypatch.setattr(web, "_resolve", lambda host: ["93.184.216.34"])
+    hits = []
+
+    def handler(req: httpx.Request):
+        hits.append(str(req.url))
+        if req.url.path == "/redir":
+            return httpx.Response(302, headers={"location": "http://evil.internal/"})
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              text="<html><head><title>t</title></head><body><script>x()</script><p>Hello <b>world</b></p></body></html>")
+
+    c = ToolContext(tmp_path.resolve(), http=httpx.Client(transport=httpx.MockTransport(handler)))
+    out = web.fetch_url(c, "http://example.com/page")
+    assert "Hello world" in out and "x()" not in out
+    web.fetch_url(c, "http://example.com/page")
+    assert hits == ["http://example.com/page"]            # second call served from cache
+    # redirect to a private address must be re-checked
+    monkeypatch.setattr(web, "_resolve", lambda host: ["10.0.0.5"] if host == "evil.internal" else ["93.184.216.34"])
+    with pytest.raises(ToolError):
+        web.fetch_url(c, "http://example.com/redir")
+
+
+def test_web_search_parses_results(tmp_path, monkeypatch):
+    from agentic.tools import web
+    monkeypatch.setattr(web, "_resolve", lambda host: ["93.184.216.34"])
+    page = ('<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.python.org%2F3%2F&rut=x">Python <b>docs</b></a>')
+    c = ToolContext(tmp_path.resolve(), http=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=page))))
+    out = web.web_search(c, "python docs")
+    assert "Python docs" in out and "https://docs.python.org/3/" in out
+
+
+def test_network_tools_always_ask(tmp_path):
+    reg = default_registry()
+    gate = Gate(Mode.ASK_ON_WRITE, lambda s: False)
+    assert gate.allow(reg.get("fetch_url"), {"url": "http://x"})[0] is False
+    assert Gate(Mode.READONLY, lambda s: True).allow(reg.get("fetch_url"), {})[0] is False
