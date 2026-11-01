@@ -87,7 +87,7 @@ Each one is small enough to finish in a few sessions, and each has a "learn" not
 | 7 | Ideator and general profiles, playbooks (markdown recipes) | gives scoped ideas and handles a college task | prompting and context management |
 | 8 | DONE (task store + resume): killed task resumes | a killed task resumes where it stopped | state and durability |
 | 9 | DONE: 4 eval tasks, `agentic eval` | you can tell if a change helped | how to measure agents |
-| 10 | PARTLY DONE: read-only MCP server done; deploy profile pending | uses an MCP server, runs a dry-run deploy | the ecosystem |
+| 10 | DONE (read-only MCP server, deploy profile, playbooks) | uses an MCP server, runs a dry-run deploy | the ecosystem |
 
 **MVP is milestones 0 to 4.** That is a safe, working builder that you can already use for projects.
 
@@ -128,4 +128,4 @@ tests/
 - **OpenCode**: many providers behind one config, LSP awareness. We already have provider-agnostic config; LSP is a later idea.
 
 ## Status note
-Milestones 0 to 6 and 8 (task store) are done, and the web UI and daemon are done (see CONTEXT.md). Remaining: eval harness (9), MCP and editor integration (10), deploy profile.
+Milestones 0-9 are done and the deploy profile and playbooks too (see CONTEXT.md). Remaining: validate against a real model (needs your key or Ollama), then optional ideas listed in CONTEXT.md.

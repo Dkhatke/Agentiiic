@@ -35,7 +35,10 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 | 6 Budgets, memory, resume | done | `store.py` (SQLite at `~/.local/state/agentic/agentic.db`): per-provider `daily_calls` cap (router skips a provider once spent, falls through to the next), token usage, `agentic usage`; every task saved after each step, `agentic tasks`, `agentic resume <id>` (drops a half-finished tool turn). Loop now defaults reply role to assistant |
 | 7 Daemon and web UI | done | `server.py` (stdlib `http.server`, no new deps): `agentic serve` binds 127.0.0.1 only, random token (file mode 600, also in the URL hash), Host-header check against DNS rebinding, JSON API + long-poll events (not SSE), approvals via the UI's Approve/Deny buttons (10 min timeout = deny); single-file UI at `ui/index.html` (dark/light, mobile-friendly). Tested end to end with a scripted router, plus a live smoke test |
 | 8 MCP and evals | done | `mcp_server.py`: stdio MCP server (`agentic mcp --workspace .`) exposing only read-only tools (read_file, list_dir, repo_map), redacted and confined, so VS Code or Antigravity can pull project context but never write; `evals.py` + `evals/*.toml` (4 tasks: create script, fix bug, read and report, refuse to leak `.env`) with `agentic eval`; runs auto-approved in a temp workspace |
-| 9 Deploy profile, Anthropic adapter, LLM-classifier option | next | deploy checklist profile with dry run first; optional native Anthropic provider; optional model-based profile routing |
+| 9 Playbooks and deploy | done | `load_playbook` tool plus `playbooks/*.md` (deploy, new-project, college-report); `deploy` profile in `ask-all` mode that follows the deploy playbook (inspect, pre-flight, dry run, build, release, verify, rollback note); builder and general load playbooks on demand |
+| 10 Real-model validation | next (needs the user's key or Ollama) | run `agentic eval` against a real model, tune prompts and defaults, verify `openrouter/free` model name |
+
+Optional later ideas: native Anthropic provider adapter, model-based profile routing, sandboxed read confinement, SearXNG search, VS Code extension, Docker sandbox for non-macOS.
 
 ## Where things live
 - `src/agentic/loop.py`: the agent loop and `Profile`
@@ -43,13 +46,14 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 - `src/agentic/permissions.py`: the gate
 - `src/agentic/tools/`: registry plus built-in, dev (`dev.py`) and web (`web.py`) tools
 - `src/agentic/safety/`: redaction and sandbox
-- `src/agentic/profiles/*.toml`: agent profiles
+- `src/agentic/profiles/*.toml`: agent profiles (builder, researcher, ideator, general, security, deploy)
+- `src/agentic/playbooks/*.md`: recipes loaded on demand
 - `src/agentic/orchestrator.py`: profile selection
 - `src/agentic/server.py`, `ui/index.html`: local daemon and web UI
 - `src/agentic/store.py`: SQLite usage and tasks
 - `src/agentic/mcp_server.py`: read-only MCP server for editors
 - `src/agentic/evals.py`, `evals/`: eval harness and tasks
-- `tests/test_core.py`: 29 tests (`test_core.py`, `test_server.py`, `test_evals_mcp.py`) (run `.venv/bin/pytest`)
+- `tests/test_core.py`: 30 tests (`test_core.py`, `test_server.py`, `test_evals_mcp.py`) (run `.venv/bin/pytest`)
 
 ## Known gaps and notes
 - The evals have only been run with scripted fake models; real pass rates are unknown until a real model is connected.

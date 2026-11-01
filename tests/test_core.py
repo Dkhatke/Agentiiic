@@ -284,3 +284,18 @@ def test_task_saved_and_resumable(tmp_path):
     out = run("t", profile(), router2, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path),
               Audit(tmp_path / "audit.jsonl"), store=store, task_id=tid, messages=msgs)
     assert out == "resumed"
+
+
+def test_playbooks_and_deploy_profile(tmp_path):
+    from agentic.tools.dev import load_playbook
+    from agentic.orchestrator import select_profile
+    from agentic.profiles import load_profile
+    c = ctx(tmp_path)
+    assert "deploy" in load_playbook(c) and "Dry run" in load_playbook(c, "deploy")
+    for bad in ("../../etc/passwd", "nope", "Deploy"):
+        with pytest.raises(ToolError):
+            load_playbook(c, bad)
+    assert select_profile("deploy this site to production").name == "deploy"
+    assert select_profile("fix the bug in my api").name == "builder"
+    assert load_profile("deploy").mode == "ask-all"
+    assert "load_playbook" in load_profile("builder").tools

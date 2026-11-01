@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from pathlib import Path
 
 from .builtin import _S, _clip, _obj
 from .registry import Registry, Risk, Tool, ToolContext, ToolError
@@ -13,6 +14,7 @@ SYMBOLS = {
     ".js": re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const\s+\w+\s*=\s*\()\s*\w*"),
     ".ts": re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|interface|type)\s+\w+"),
 }
+PLAYBOOK_DIR = Path(__file__).parent.parent / "playbooks"
 PROTECTED_BRANCHES = {"main", "master"}
 MAX_FILES = 200
 
@@ -58,7 +60,18 @@ def git_branch(ctx: ToolContext, name: str) -> str:
     return f"on new branch {name}"
 
 
+def load_playbook(ctx: ToolContext, name: str = "") -> str:
+    available = sorted(p.stem for p in PLAYBOOK_DIR.glob("*.md"))
+    if not name:
+        return "available playbooks: " + ", ".join(available)
+    if not re.fullmatch(r"[a-z0-9-]{1,40}", name) or name not in available:
+        raise ToolError(f"unknown playbook '{name}' (available: {', '.join(available)})")
+    return (PLAYBOOK_DIR / f"{name}.md").read_text()
+
+
 def register(reg: Registry) -> None:
+    reg.register(Tool("load_playbook", "Load a step-by-step recipe (call with no name to list them).",
+                      _obj({"name": _S}, []), Risk.READ, load_playbook))
     reg.register(Tool("repo_map", "List project files with top-level function/class names.",
                       _obj({"path": _S}, []), Risk.READ, repo_map, untrusted=True))
     reg.register(Tool("git_branch", "Create and switch to a new git branch.",
