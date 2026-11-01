@@ -24,6 +24,7 @@ class ToolContext:
     shell_timeout: int = 60
     sandbox: bool = True
     sandbox_network: bool = False
+    allow_main_commit: bool = False
 
     def resolve(self, path: str) -> Path:
         """Resolve a path and refuse anything outside the workspace root."""

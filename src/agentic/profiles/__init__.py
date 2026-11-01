@@ -11,4 +11,10 @@ def load_profile(name: str) -> Profile:
     if not path.exists():
         available = ", ".join(p.stem for p in _DIR.glob("*.toml"))
         raise SystemExit(f"unknown profile '{name}' (available: {available})")
-    return Profile(**tomllib.loads(path.read_text()))
+    data = tomllib.loads(path.read_text())
+    data["keywords"] = tuple(data.get("keywords", ()))
+    return Profile(**data)
+
+
+def all_profiles() -> list[Profile]:
+    return [load_profile(p.stem) for p in sorted(_DIR.glob("*.toml"))]

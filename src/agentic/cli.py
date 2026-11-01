@@ -8,7 +8,8 @@ from .audit import Audit
 from .config import CONFIG_PATH, SAMPLE_CONFIG, load_config
 from .loop import run
 from .permissions import Gate, Mode
-from .profiles import load_profile
+from .orchestrator import select_profile
+from .profiles import all_profiles, load_profile
 from .router import Router, RouterError
 from .tools import ToolContext, default_registry
 
@@ -19,13 +20,15 @@ def _ask(summary: str) -> bool:
 
 def cmd_run(args) -> int:
     cfg = load_config()
-    profile = load_profile(args.profile)
+    profile = select_profile(args.task) if args.profile == "auto" else load_profile(args.profile)
+    print(f"profile: {profile.name}")
+    mode = Mode(args.mode or profile.mode or "ask-on-write")
     router = Router(cfg.providers)
     ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout,
                       cfg.sandbox.enabled, cfg.sandbox.network)
     profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
     try:
-        out = run(args.task, profile, router, default_registry(), Gate(Mode(args.mode), _ask), ctx,
+        out = run(args.task, profile, router, default_registry(), Gate(mode, _ask), ctx,
                   Audit(), cfg.limits.max_model_calls, on_event=lambda e: print(f"  · {e}"))
     except RouterError as e:
         print(f"error: {e}")
@@ -57,9 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="run a task")
     r.add_argument("task")
-    r.add_argument("--profile", default="builder")
+    r.add_argument("--profile", default="auto", help="auto, or one of: " + ", ".join(p.name for p in all_profiles()))
     r.add_argument("--workspace", default=".")
-    r.add_argument("--mode", default="ask-on-write", choices=[m.value for m in Mode])
+    r.add_argument("--mode", default=None, choices=[m.value for m in Mode])
     r.set_defaults(fn=cmd_run)
     sub.add_parser("providers", help="show configured providers").set_defaults(fn=cmd_providers)
     sub.add_parser("init", help="write a sample config").set_defaults(fn=cmd_init)

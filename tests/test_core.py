@@ -170,3 +170,41 @@ def test_sandbox_blocks_outside_write_and_network(tmp_path):
     run_shell(ctx(tmp_path), "echo ok > inside.txt")
     assert (tmp_path / "inside.txt").read_text().strip() == "ok"
     assert "exit=0" not in run_shell(ctx(tmp_path), "curl -s -m 3 https://example.com")
+
+
+def test_orchestrator_selects_profiles():
+    from agentic.orchestrator import select_profile
+    assert select_profile("fix the bug in my api").name == "builder"
+    assert select_profile("compare the best libraries for ocr").name == "researcher"
+    assert select_profile("give me project ideas").name == "ideator"
+    assert select_profile("audit this repo for leaked secrets").name == "security"
+    assert select_profile("hello there").name == "general"
+
+
+def test_security_and_research_profiles_are_readonly():
+    from agentic.profiles import all_profiles
+    ro = {p.name for p in all_profiles() if p.mode == "readonly"}
+    assert {"security", "researcher", "ideator"} <= ro
+    reg = default_registry()
+    for p in all_profiles():
+        for t in p.tools:
+            reg.get(t)  # every profile only references registered tools
+
+
+def test_repo_map_and_commit_guard(tmp_path):
+    import subprocess
+    from agentic.tools.dev import repo_map, git_commit, git_branch
+    (tmp_path / "a.py").write_text("def foo():\n    pass\nclass Bar:\n    pass\n")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "x.js").write_text("function hidden(){}")
+    out = repo_map(ctx(tmp_path))
+    assert "a.py" in out and "def foo" in out and "class Bar" in out and "hidden" not in out
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    for k, v in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(["git", "config", k, v], cwd=tmp_path, check=True)
+    with pytest.raises(ToolError):
+        git_commit(ctx(tmp_path), "x")                  # refused on main
+    git_branch(ctx(tmp_path), "feat/x")
+    assert "x" in git_commit(ctx(tmp_path), "x")
+    with pytest.raises(ToolError):
+        git_branch(ctx(tmp_path), "--evil")

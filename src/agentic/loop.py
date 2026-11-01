@@ -18,6 +18,8 @@ class Profile:
     system_prompt: str
     tools: list[str]
     max_steps: int = 25
+    mode: str | None = None          # default permission mode for this profile
+    keywords: tuple[str, ...] = ()   # used by the orchestrator to pick this profile
 
 
 def run(task: str, profile: Profile, router: Router, registry: Registry, gate: Gate,

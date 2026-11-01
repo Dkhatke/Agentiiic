@@ -84,4 +84,6 @@ def default_registry() -> Registry:
     reg.register(Tool("write_file", "Create or overwrite a file.", _obj({"path": _S, "content": _S}, ["path", "content"]), Risk.WRITE, write_file))
     reg.register(Tool("edit_file", "Replace one exact occurrence of text in a file.", _obj({"path": _S, "old": _S, "new": _S}, ["path", "old", "new"]), Risk.WRITE, edit_file))
     reg.register(Tool("run_shell", "Run a shell command in the workspace.", _obj({"command": _S}, ["command"]), Risk.DESTRUCTIVE, run_shell, _shell_risk))
+    from . import dev
+    dev.register(reg)
     return reg
