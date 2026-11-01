@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>agentic</title>
+<style>
+  :root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#666;--line:#ddd;--acc:#2a5bd7;--warn:#b45309}
+  @media(prefers-color-scheme:dark){:root{--bg:#141414;--fg:#e8e8e8;--mut:#999;--line:#333;--acc:#7aa2ff;--warn:#f0a040}}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+  main{max-width:820px;margin:0 auto;padding:16px}
+  h1{font-size:18px;margin:0 0 12px} label{display:block;font-size:12px;color:var(--mut);margin-top:10px}
+  input,textarea,select,button{font:inherit;color:inherit;background:transparent;border:1px solid var(--line);border-radius:6px;padding:8px;width:100%;box-sizing:border-box}
+  button{cursor:pointer;width:auto;padding:8px 14px} button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+  .row{display:flex;gap:8px;flex-wrap:wrap} .row>*{flex:1;min-width:140px}
+  #log{margin-top:16px;border-top:1px solid var(--line)} .ev{padding:8px 0;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+  .tool{color:var(--mut);font:13px ui-monospace,monospace} .ask{color:var(--warn)} .done{color:var(--acc)}
+  #usage{color:var(--mut);font-size:13px;margin-top:20px}
+</style>
+<main>
+  <h1>agentic</h1>
+  <label>Task</label><textarea id="task" rows="3" placeholder="What should it do?"></textarea>
+  <div class="row">
+    <div><label>Workspace folder</label><input id="ws" placeholder="/path/to/project"></div>
+    <div><label>Profile</label><select id="profile"><option>auto</option><option>builder</option><option>researcher</option><option>ideator</option><option>general</option><option>security</option></select></div>
+  </div>
+  <p><button class="p" id="go">Run</button></p>
+  <div id="log"></div><div id="usage"></div>
+</main>
+<script>
+const token=new URLSearchParams(location.hash.slice(1)).get('token')||'';
+const $=id=>document.getElementById(id), log=$('log');
+const api=(p,o={})=>fetch(p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(token),o).then(r=>r.json());
+function add(cls,text){const d=document.createElement('div');d.className='ev '+cls;d.textContent=text;log.appendChild(d);return d}
+async function poll(id){
+  let after=0;
+  for(;;){
+    let evs;try{evs=await api(`/api/tasks/${id}/events?after=${after}`)}catch{await new Promise(r=>setTimeout(r,2000));continue}
+    if(!Array.isArray(evs)){add('',JSON.stringify(evs));return}
+    for(const e of evs){after=e.i+1;
+      if(e.type==='started')add('tool',`task #${e.id} · profile ${e.profile}`);
+      else if(e.type==='tool')add('tool',e.text);
+      else if(e.type==='approval'){const d=add('ask','Approve?\n'+e.summary+'\n');
+        for(const[v,l]of[[true,'Approve'],[false,'Deny']]){const b=document.createElement('button');b.textContent=l;
+          b.onclick=()=>{api('/api/approvals/'+e.id,{method:'POST',body:JSON.stringify({approve:v})});d.querySelectorAll('button').forEach(x=>x.remove())};d.appendChild(b)}}
+      else if(e.type==='done'){add('done',e.output||'(done)');usage();return}
+      else if(e.type==='error'){add('ask','error: '+e.message);return}}
+  }
+}
+$('go').onclick=async()=>{
+  log.innerHTML='';
+  const r=await api('/api/tasks',{method:'POST',body:JSON.stringify({task:$('task').value,workspace:$('ws').value,profile:$('profile').value})});
+  if(r.id)poll(r.id);else add('ask',r.error||'failed')
+};
+async function usage(){const u=await api('/api/usage');$('usage').textContent=Array.isArray(u)&&u.length?'Today: '+u.map(x=>`${x.provider} ${x.calls} calls`).join(' · '):''}
+$('ws').value=localStorage.ws||'';$('ws').onchange=()=>localStorage.ws=$('ws').value;usage();
+</script>

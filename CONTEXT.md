@@ -33,7 +33,8 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 | 4 Profiles and orchestrator | done | profiles builder, researcher, ideator, general, security; keyword orchestrator (`--profile auto`); `repo_map`, `git_branch`, `git_commit` (refuses main/master); read-only profiles default to `readonly` mode |
 | 5 Researcher web tools | done | `web_search` (DuckDuckGo HTML, no key) and `fetch_url`; NETWORK risk so always asks; output untrusted and taints the gate; SSRF guard (public http(s) only, redirects re-checked); 1 MB cap; 24h disk cache. Verified live. Researcher profile now `ask-on-write` mode (readonly would deny network) |
 | 6 Budgets, memory, resume | done | `store.py` (SQLite at `~/.local/state/agentic/agentic.db`): per-provider `daily_calls` cap (router skips a provider once spent, falls through to the next), token usage, `agentic usage`; every task saved after each step, `agentic tasks`, `agentic resume <id>` (drops a half-finished tool turn). Loop now defaults reply role to assistant |
-| 7 Daemon and web UI | next | local HTTP+SSE server on 127.0.0.1 with a local token, small static UI with approval buttons |
+| 7 Daemon and web UI | done | `server.py` (stdlib `http.server`, no new deps): `agentic serve` binds 127.0.0.1 only, random token (file mode 600, also in the URL hash), Host-header check against DNS rebinding, JSON API + long-poll events (not SSE), approvals via the UI's Approve/Deny buttons (10 min timeout = deny); single-file UI at `ui/index.html` (dark/light, mobile-friendly). Tested end to end with a scripted router, plus a live smoke test |
+| 8 Editor integration and eval | next | MCP server exposing the tools, eval harness of repeatable tasks, optional thin VS Code extension |
 
 ## Where things live
 - `src/agentic/loop.py`: the agent loop and `Profile`
@@ -43,7 +44,9 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 - `src/agentic/safety/`: redaction and sandbox
 - `src/agentic/profiles/*.toml`: agent profiles
 - `src/agentic/orchestrator.py`: profile selection
-- `tests/test_core.py`: 20 tests (run `.venv/bin/pytest`)
+- `src/agentic/server.py`, `ui/index.html`: local daemon and web UI
+- `src/agentic/store.py`: SQLite usage and tasks
+- `tests/test_core.py`: 24 tests (`tests/test_core.py`, `tests/test_server.py`) (run `.venv/bin/pytest`)
 
 ## Known gaps and notes
 - Not yet run against a real model (no key or Ollama yet). Everything is covered by mocked tests.
@@ -58,5 +61,6 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 uv venv --python 3.12 && uv pip install -e ".[dev]"
 .venv/bin/agentic init && .venv/bin/agentic providers
 export OPENROUTER_API_KEY=...        # or run Ollama
+.venv/bin/agentic serve              # web UI at the printed URL
 .venv/bin/agentic run "task" --workspace ./project
 ```

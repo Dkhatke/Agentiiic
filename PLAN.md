@@ -126,3 +126,6 @@ tests/
 - **mini-swe-agent** (SWE-agent team): ~100-line loop, linear message history, each shell command is a fresh `subprocess.run`, execution environment is swappable (local to Docker/bubblewrap), and it can drive any model through plain text. Adopted: text tool protocol (`tool_mode = "text"`) so small and free models work, plus the swappable-environment idea for the sandbox milestone.
 - **Aider**: git-native edits and a repo map. Planned for the builder milestone (commit per approved change, ripgrep/tree-sitter map).
 - **OpenCode**: many providers behind one config, LSP awareness. We already have provider-agnostic config; LSP is a later idea.
+
+## Status note
+Milestones 0 to 6 and 8 (task store) are done, and the web UI and daemon are done (see CONTEXT.md). Remaining: eval harness (9), MCP and editor integration (10), deploy profile.

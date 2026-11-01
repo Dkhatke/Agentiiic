@@ -69,6 +69,12 @@ def cmd_usage(_) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    from .server import serve
+    serve(args.port)
+    return 0
+
+
 def cmd_providers(_) -> int:
     for p in load_config().providers:
         print(f"{'ok ' if p.usable else 'no '} {p.name:12} {p.model}  ({p.base_url})"
@@ -100,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("id", type=int)
     rs.add_argument("--mode", default=None, choices=[m.value for m in Mode])
     rs.set_defaults(fn=cmd_resume)
+    sv = sub.add_parser("serve", help="start the local web UI and API")
+    sv.add_argument("--port", type=int, default=8765)
+    sv.set_defaults(fn=cmd_serve)
     sub.add_parser("tasks", help="list recent tasks").set_defaults(fn=cmd_tasks)
     sub.add_parser("usage", help="today's provider usage").set_defaults(fn=cmd_usage)
     sub.add_parser("providers", help="show configured providers").set_defaults(fn=cmd_providers)
