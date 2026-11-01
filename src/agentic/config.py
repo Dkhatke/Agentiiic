@@ -29,6 +29,10 @@ tool_mode = "text"                 # small models often can't do native tool-cal
 max_steps = 25
 max_model_calls = 60
 shell_timeout = 60
+
+[sandbox]                          # macOS: shell can only write in the workspace
+enabled = true
+network = false                    # true lets shell commands reach the internet
 """
 
 
@@ -57,9 +61,16 @@ class Limits:
 
 
 @dataclass
+class Sandbox:
+    enabled: bool = True
+    network: bool = False  # set true if shell commands must reach the internet (pip/npm install)
+
+
+@dataclass
 class Config:
     providers: list[Provider] = field(default_factory=list)
     limits: Limits = field(default_factory=Limits)
+    sandbox: Sandbox = field(default_factory=Sandbox)
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -67,4 +78,5 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
     return Config(
         providers=[Provider(**p) for p in data.get("providers", [])],
         limits=Limits(**data.get("limits", {})),
+        sandbox=Sandbox(**data.get("sandbox", {})),
     )

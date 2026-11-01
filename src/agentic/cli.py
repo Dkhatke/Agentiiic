@@ -21,7 +21,8 @@ def cmd_run(args) -> int:
     cfg = load_config()
     profile = load_profile(args.profile)
     router = Router(cfg.providers)
-    ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout)
+    ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout,
+                      cfg.sandbox.enabled, cfg.sandbox.network)
     profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
     try:
         out = run(args.task, profile, router, default_registry(), Gate(Mode(args.mode), _ask), ctx,

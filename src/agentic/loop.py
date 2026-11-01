@@ -8,6 +8,7 @@ from typing import Callable
 from .audit import Audit
 from .permissions import Gate
 from .router import Router
+from .safety import redact
 from .tools import Registry, ToolContext, ToolError
 
 
@@ -56,12 +57,16 @@ def _execute(call, profile, registry, gate, ctx, audit, on_event) -> str:
         audit.record("tool_error", tool=name, error=str(e))
         return f"error: {e}"
     ok, why = gate.allow(tool, args)
-    audit.record("tool_call", tool=name, args=args, decision=why)
+    audit.record("tool_call", tool=name, args=json.loads(redact(json.dumps(args))), decision=why)
     on_event(f"{name} {args} -> {why}")
     if not ok:
         return why
     try:
-        return tool.func(ctx, **args)
+        out = redact(tool.func(ctx, **args))
     except (ToolError, TypeError, OSError) as e:
         audit.record("tool_error", tool=name, error=str(e))
         return f"error: {e}"
+    if tool.untrusted:
+        gate.tainted = True
+        out = f"<untrusted_data>\n{out}\n</untrusted_data>"
+    return out

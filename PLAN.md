@@ -80,7 +80,7 @@ Each one is small enough to finish in a few sessions, and each has a "learn" not
 | 0 | DONE: skeleton, config, tests | `agentic --help` works | project layout |
 | 1 | DONE: loop, read/list/write/edit/shell tools, permission gate | it edits a file only after you approve | what an agent loop really is |
 | 2 | PARTLY DONE: ordered fallback + cooldown + call cap done; per-key daily budgets and usage view pending | it survives a rate limit by switching provider | free-tier engineering |
-| 3 | Sandbox, audit log, redaction, injection rules | a malicious web page can't make it run a command | agent security |
+| 3 | DONE: sandbox-exec shell, redaction, protected files, untrusted-data tainting | a malicious file can't make it run a command unasked | agent security |
 | 4 | Profiles and the orchestrator | the same engine behaves as builder or researcher | agents as config |
 | 5 | Researcher: search, fetch, extract, cite, cache | produces a sourced report in under N tokens | tool use and RAG basics |
 | 6 | Builder: scaffold, test, branch, PR, undo | builds a small project end to end | the coding-agent workflow |

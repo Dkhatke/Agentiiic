@@ -22,6 +22,8 @@ class ToolError(Exception):
 class ToolContext:
     root: Path
     shell_timeout: int = 60
+    sandbox: bool = True
+    sandbox_network: bool = False
 
     def resolve(self, path: str) -> Path:
         """Resolve a path and refuse anything outside the workspace root."""
@@ -39,6 +41,7 @@ class Tool:
     risk: Risk
     func: Callable[..., str]
     risk_fn: Callable[[dict], Risk] | None = None  # per-call override (e.g. safe shell commands)
+    untrusted: bool = False  # output may carry attacker-controlled text (files, web pages)
 
     def risk_for(self, args: dict) -> Risk:
         return self.risk_fn(args) if self.risk_fn else self.risk

@@ -17,11 +17,14 @@ class Gate:
     def __init__(self, mode: Mode, ask: Callable[[str], bool]):
         self.mode = mode
         self.ask = ask
+        self.tainted = False  # set once untrusted content has entered the model's context
 
     def allow(self, tool: Tool, args: dict) -> tuple[bool, str]:
         risk = tool.risk_for(args)
-        summary = f"[{risk.value}] {tool.name} {args}"
-        if risk is Risk.READ and self.mode is not Mode.ASK_ALL:
+        note = " (context contains untrusted content)" if self.tainted else ""
+        summary = f"[{risk.value}] {tool.name} {args}{note}"
+        auto_ok = risk is Risk.READ and not (self.tainted and tool.name == "run_shell")
+        if auto_ok and self.mode is not Mode.ASK_ALL:
             return True, "auto"
         if self.mode is Mode.READONLY:
             return False, "denied: readonly mode"
