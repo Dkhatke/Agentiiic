@@ -23,6 +23,7 @@ model = "openrouter/free"          # change to any ':free' model from openrouter
 name = "ollama"
 base_url = "http://localhost:11434/v1"
 model = "qwen2.5-coder:3b"         # any model you've pulled; no key needed
+tool_mode = "text"                 # small models often can't do native tool-calling
 
 [limits]
 max_steps = 25
@@ -37,6 +38,7 @@ class Provider:
     base_url: str
     model: str
     api_key_env: str | None = None
+    tool_mode: str = "native"  # "native" = API tool-calling; "text" = works with any model
 
     @property
     def api_key(self) -> str | None:

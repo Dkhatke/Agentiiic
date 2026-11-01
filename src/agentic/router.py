@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import httpx
 
 from .config import Provider
+from .textmode import parse_reply, to_text_messages
 
 RETRYABLE = {408, 429, 500, 502, 503, 504}
 AUTH_FAILED = {401, 403}
@@ -49,8 +50,9 @@ class Router:
         raise RouterError("all providers failed: " + "; ".join(errors))
 
     def _call(self, p: Provider, messages, tools) -> Reply:
-        body: dict = {"model": p.model, "messages": messages}
-        if tools:
+        text_mode = bool(tools) and p.tool_mode == "text"
+        body: dict = {"model": p.model, "messages": to_text_messages(messages, tools) if text_mode else messages}
+        if tools and not text_mode:
             body["tools"] = tools
         headers = {"Authorization": f"Bearer {p.api_key}"} if p.api_key else {}
         self.calls += 1
@@ -67,7 +69,7 @@ class Router:
             msg = data["choices"][0]["message"]
         except (KeyError, IndexError) as e:
             raise _Skip("malformed response") from e
-        return Reply(msg, p.name, data.get("usage") or {})
+        return Reply(parse_reply(msg) if text_mode else msg, p.name, data.get("usage") or {})
 
 
 class _Skip(Exception):

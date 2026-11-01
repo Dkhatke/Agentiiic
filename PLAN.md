@@ -121,3 +121,8 @@ tests/
 - Confirm Python and CLI-first.
 - Which free provider keys you already have.
 - Whether the repo gets a name and a GitHub remote now.
+
+## Design inspiration from existing repos
+- **mini-swe-agent** (SWE-agent team): ~100-line loop, linear message history, each shell command is a fresh `subprocess.run`, execution environment is swappable (local to Docker/bubblewrap), and it can drive any model through plain text. Adopted: text tool protocol (`tool_mode = "text"`) so small and free models work, plus the swappable-environment idea for the sandbox milestone.
+- **Aider**: git-native edits and a repo map. Planned for the builder milestone (commit per approved change, ripgrep/tree-sitter map).
+- **OpenCode**: many providers behind one config, LSP awareness. We already have provider-agnostic config; LSP is a later idea.

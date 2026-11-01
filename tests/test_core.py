@@ -101,3 +101,26 @@ def test_loop_step_cap(tmp_path):
     out = run("t", profile(), router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True),
               ctx(tmp_path), Audit(tmp_path / "audit.jsonl"))
     assert "step limit" in out
+
+
+def test_text_mode_roundtrip():
+    sent = []
+
+    def handler(req: httpx.Request):
+        body = json.loads(req.content)
+        sent.append(body)
+        content = ('<tool_call>{"name": "read_file", "arguments": {"path": "a"}}</tool_call>'
+                   if len(sent) == 1 else "done")
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": content}}]})
+
+    r = Router([Provider("t", "http://x/v1", "m", tool_mode="text")],
+               httpx.Client(transport=httpx.MockTransport(handler)))
+    tools = default_registry().schemas(["read_file"])
+    msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}]
+    reply = r.chat(msgs, tools)
+    assert "tools" not in sent[0] and "read_file" in sent[0]["messages"][0]["content"]
+    call = reply.message["tool_calls"][0]
+    assert call["function"]["name"] == "read_file"
+    msgs += [reply.message, {"role": "tool", "tool_call_id": call["id"], "content": "file text"}]
+    assert r.chat(msgs, tools).message["content"] == "done"
+    assert sent[1]["messages"][-1] == {"role": "user", "content": "<tool_result>\nfile text\n</tool_result>"}
