@@ -299,3 +299,24 @@ def test_playbooks_and_deploy_profile(tmp_path):
     assert select_profile("fix the bug in my api").name == "builder"
     assert load_profile("deploy").mode == "ask-all"
     assert "load_playbook" in load_profile("builder").tools
+
+
+def test_call_budget_is_per_run_not_per_router(tmp_path):
+    class Counting(ScriptedRouter):
+        calls = 50  # router already used 50 calls in earlier runs
+        def chat(self, messages, tools=None):
+            self.calls += 1
+            return super().chat(messages, tools)
+    out = run("t", profile(), Counting([{"content": "ok"}]), default_registry(),
+              Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"), max_model_calls=10)
+    assert out == "ok"
+
+
+def test_shell_refuses_protected_files(tmp_path):
+    from agentic.tools.builtin import run_shell
+    (tmp_path / ".env").write_text("TOKEN=supersecretvalue123")
+    for cmd in ("cp .env summary.txt", "cat .env", "cat < .env", "echo hi; cat ./.env", "tar cf x.tar id_rsa", "cat 'sub/.env.local'"):
+        with pytest.raises(ToolError):
+            run_shell(ctx(tmp_path), cmd)
+    assert "exit=0" in run_shell(ctx(tmp_path), "echo environment variables")
+    assert "exit=0" in run_shell(ctx(tmp_path), "ls")

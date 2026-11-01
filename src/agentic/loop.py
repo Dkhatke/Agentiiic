@@ -30,10 +30,11 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
         {"role": "system", "content": profile.system_prompt}, {"role": "user", "content": task}]
     save = (lambda status: store.save_task(task_id, messages, status)) if store and task_id else (lambda _: None)
     schemas = registry.schemas(profile.tools)
+    calls_at_start = getattr(router, "calls", 0)  # budget is per run, not per router lifetime
     audit.record("task_start", task=task, profile=profile.name)
 
     for step in range(profile.max_steps):
-        if router.calls >= max_model_calls:
+        if getattr(router, "calls", 0) - calls_at_start >= max_model_calls:
             audit.record("budget_stop", reason="max_model_calls")
             save("stopped")
             return "Stopped: model call budget reached."

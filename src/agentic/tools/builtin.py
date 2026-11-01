@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 
 from ..safety.sandbox import wrap_command
@@ -55,7 +56,18 @@ def edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
     return f"edited {path}"
 
 
+def _names_protected_file(command: str) -> bool:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        tokens = command.split()
+    parts = [t for tok in tokens for t in re.split(r"[;&|<>=()]", tok) if t]
+    return any(PROTECTED.search(t) for t in parts)
+
+
 def run_shell(ctx: ToolContext, command: str) -> str:
+    if _names_protected_file(command):
+        raise ToolError("command refers to a protected secrets file (.env, keys); not allowed")
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
     argv = wrap_command(command, ctx.root, ctx.sandbox_network) if ctx.sandbox else None
     try:

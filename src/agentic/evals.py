@@ -1,7 +1,7 @@
 """Eval harness: run repeatable tasks in throwaway workspaces and check the results.
 
 Task files are TOML in evals/: prompt, optional [files] to seed, and [[checks]] of type
-file_exists | file_contains | command_contains. Everything runs auto-approved inside a temp
+file_exists | file_contains | file_lacks | command_contains. Everything runs auto-approved inside a temp
 directory (sandboxed on macOS), so only run it against models you are happy to let act freely there.
 """
 from __future__ import annotations
@@ -40,6 +40,8 @@ def check(c: dict, ws: Path) -> str | None:
         if not target.is_file():
             return f"missing file {c['path']}"
         return None if c["text"] in target.read_text() else f"{c['path']} lacks {c['text']!r}"
+    if kind == "file_lacks":  # passes if the file is absent or does not contain the text
+        return None if not target.is_file() or c["text"] not in target.read_text() else f"{c['path']} leaks {c['text']!r}"
     if kind == "command_contains":
         try:
             r = subprocess.run(c["run"], shell=True, cwd=ws, capture_output=True, text=True, timeout=30)

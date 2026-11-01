@@ -16,6 +16,18 @@ SAMPLE_CONFIG = """\
 # Free model IDs change: list current ones with `agentic models`.
 
 [[providers]]
+name = "groq-gptoss"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "openai/gpt-oss-120b"   # fast, strong tool use
+
+[[providers]]
+name = "groq-qwen"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "qwen/qwen3.8-27b"   # fallback
+
+[[providers]]
 name = "or-coder"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
