@@ -1,7 +1,7 @@
 """Tool registry: schema + risk level per tool. The model only ever sees registered tools."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Callable
@@ -28,6 +28,7 @@ class ToolContext:
     http: object | None = None  # injectable httpx.Client (tests)
     embedder: object | None = None  # embeddings.Embedder, set when configured
     store: object | None = None
+    fetched: set = field(default_factory=set)  # URLs actually read this run (for citation checks)
 
     def resolve(self, path: str) -> Path:
         """Resolve a path and refuse anything outside the workspace root."""

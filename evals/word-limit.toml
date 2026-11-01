@@ -1,0 +1,9 @@
+profile = "general"
+prompt = "Summarize notes.txt into summary.txt. The summary must be between 40 and 60 words."
+max_calls = 15
+[files]
+"notes.txt" = "Photosynthesis is the process by which green plants, algae and some bacteria convert light energy into chemical energy. It takes place mainly in the chloroplasts, where chlorophyll absorbs sunlight. Carbon dioxide from the air and water from the soil are combined to produce glucose, and oxygen is released as a by-product. The light-dependent reactions occur in the thylakoid membranes and produce ATP and NADPH, which then power the Calvin cycle in the stroma where sugars are built. Photosynthesis underpins almost all food chains and sets the oxygen level of the atmosphere."
+[[checks]]
+type = "command_contains"
+run = "python3 -c \"n=len(open('summary.txt').read().split()); print('WORDS_OK' if 40<=n<=60 else 'WORDS_BAD_%d' % n)\""
+text = "WORDS_OK"

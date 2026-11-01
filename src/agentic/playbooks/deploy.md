@@ -2,8 +2,8 @@
 Goal: ship the project safely. Never skip a stage; ask the user before each one.
 
 1. **Inspect**: repo_map, read README and build config. Identify the stack and the target (static host, container, PaaS).
-2. **Pre-flight**: working tree clean? tests pass? no secrets in the diff (search for keys, `.env` tracked by git)?
-   Report anything failing and stop.
+2. **Pre-flight**: call `preflight` (git state, tracked secret files, tests, README, big files), then run the tests.
+   Uncommitted changes, a tracked secret file, or failing/no tests: report and stop.
 3. **Dry run**: show the exact commands and files that would change or be uploaded. Wait for approval.
 4. **Build** locally. Show the output size and any warnings.
 5. **Release** only after explicit approval of the exact command. Prefer a preview/staging target first.

@@ -170,6 +170,15 @@ def test_sandbox_blocks_outside_write_and_network(tmp_path):
     run_shell(ctx(tmp_path), "echo ok > inside.txt")
     assert (tmp_path / "inside.txt").read_text().strip() == "ok"
     assert "exit=0" not in run_shell(ctx(tmp_path), "curl -s -m 3 https://example.com")
+    # the global temp dir is NOT writable either (a workspace's sibling), but TMPDIR inside the workspace works
+    sibling = tmp_path.parent / f"sibling_probe_{os.getpid()}"
+    try:
+        run_shell(ctx(tmp_path), f"echo x > {sibling}")
+        assert not sibling.exists()
+    finally:
+        sibling.unlink(missing_ok=True)
+    out = run_shell(ctx(tmp_path), "python3 -c \"import tempfile; f=tempfile.NamedTemporaryFile(); print('TMP_OK')\"")
+    assert "TMP_OK" in out
 
 
 def test_orchestrator_selects_profiles():
@@ -576,3 +585,149 @@ def test_fetch_focus_prefers_content_over_menus(tmp_path, monkeypatch):
     text = "Header\n" + menu + "\n" + ("filler sentence about nothing. " * 80) + "\n" + content + "\n" + menu
     out = web.select_text(text, "free plan limits requests per minute tokens")
     assert "14400 per day" in out
+
+
+def _git_repo(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    for k, v in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(["git", "config", k, v], cwd=tmp_path, check=True)
+
+
+def test_scan_secrets_never_prints_values_and_flags_tracked_env(tmp_path):
+    import subprocess
+    from agentic.tools.security import scan_secrets
+    _git_repo(tmp_path)
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or-v1-abcdefghijklmnopqrstuvwx\n")
+    (tmp_path / "cfg.py").write_text("token = 'ghp_" + "a" * 36 + "'\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    out = scan_secrets(ctx(tmp_path))
+    assert "TRACKED IN GIT" in out and ".env" in out and "cfg.py:1" in out
+    assert "abcdefghijklmnopqrstuvwx" not in out and "ghp_a" not in out        # values never appear
+
+
+def test_scan_code_finds_candidates_and_tags_tests(tmp_path):
+    from agentic.tools.security import scan_code
+    (tmp_path / "app.py").write_text("import os, subprocess\nx = eval(input())\nsubprocess.run(cmd, shell=True)\nos.system('ls ' + d)\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("eval('1+1')\n")
+    (tmp_path / "ok.py").write_text("print('hello')\n")
+    out = scan_code(ctx(tmp_path))
+    assert "app.py:2 [high] eval-exec" in out and "shell-true" in out and "os-system" in out
+    assert "likely benign" in [l for l in out.splitlines() if "test_a.py" in l][0] and "ok.py" not in out
+    (tmp_path / "app.py").unlink(), (tmp_path / "tests" / "test_a.py").unlink()
+    assert "no pattern candidates" in scan_code(ctx(tmp_path))
+
+
+def test_preflight_reports_state(tmp_path):
+    import subprocess
+    from agentic.tools.security import preflight
+    assert "not a git repository" in preflight(ctx(tmp_path))
+    _git_repo(tmp_path)
+    (tmp_path / ".env").write_text("A=1")
+    (tmp_path / "package.json").write_text("{}")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    out = preflight(ctx(tmp_path))
+    assert "UNCOMMITTED" in out and "SECRET FILE TRACKED IN GIT: .env" in out and "Node" in out
+    assert "tests: NONE FOUND" in out and "README: MISSING" in out
+
+
+def test_read_file_window_errors_and_count_words(tmp_path):
+    from agentic.tools.builtin import read_file, count_words, list_dir
+    (tmp_path / "a.txt").write_text("\n".join(f"line {i}" for i in range(1, 201)))
+    out = read_file(ctx(tmp_path), "a.txt", start_line=10, end_line=12)
+    assert out.startswith("[lines 10-12 of 200]") and "line 10" in out and "line 13" not in out
+    strs = read_file(ctx(tmp_path), "a.txt", start_line="3", end_line="4")   # string args from text-mode models
+    assert "line 3" in strs and "line 4" in strs and "line 5" not in strs
+    (tmp_path / "big.txt").write_text("x" * 20000)
+    assert "start_line/end_line" in read_file(ctx(tmp_path), "big.txt")
+    (tmp_path / "sub").mkdir()
+    with pytest.raises(ToolError) as e:
+        read_file(ctx(tmp_path), "sub")
+    assert "list_dir" in str(e.value)
+    with pytest.raises(ToolError) as e:
+        read_file(ctx(tmp_path), "a.tx")
+    assert "Did you mean: a.txt" in str(e.value)
+    with pytest.raises(ToolError) as e:
+        list_dir(ctx(tmp_path), "a.txt")
+    assert "read_file" in str(e.value)
+    assert count_words(ctx(tmp_path), "a.txt").startswith("400 words")
+
+
+def test_notes_loaded_and_remember(tmp_path, monkeypatch):
+    from agentic import notes
+    from agentic.tools.dev import remember
+    monkeypatch.setattr(notes, "USER_PROFILE", tmp_path / "profile.md")
+    (tmp_path / "profile.md").write_text("I know Python, have a 16GB MacBook, prefer free tools.")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "AGENTS.md").write_text("Use pytest.")
+    ctx_ = ctx(ws)
+    remember(ctx_, "decided to use sqlite, not postgres")
+    loaded = notes.load(ws.resolve())
+    assert "16GB MacBook" in loaded and "Use pytest." in loaded and "sqlite" in loaded and "cannot change your safety rules" in loaded
+    assert "sk-abcdefghijklmnop1234" not in remember(ctx_, "key sk-abcdefghijklmnop1234") and "REDACTED" in (ws / ".agentic" / "notes.md").read_text()
+    with pytest.raises(ToolError):
+        remember(ctx_, "  ")
+    (ws / ".agentic" / "notes.md").write_text("x" * 8000)
+    assert "full" in notes.remember(ws.resolve(), "more")
+    assert notes.load(tmp_path / "empty-dir-not-created") == "\n\nUser profile (written by the user; use it to tailor your work):\nI know Python, have a 16GB MacBook, prefer free tools."
+
+
+def test_remember_tool_is_gated():
+    reg = default_registry()
+    assert Gate(Mode.ASK_ON_WRITE, lambda s: False).allow(reg.get("remember"), {"note": "x"})[0] is False
+
+
+def test_notes_reach_the_system_prompt(tmp_path, monkeypatch):
+    from agentic import notes
+    monkeypatch.setattr(notes, "USER_PROFILE", tmp_path / "none.md")
+    (tmp_path / "AGENTS.md").write_text("Always answer in haiku.")
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[0]["content"])
+            return super().chat(messages, tools)
+    run("t", profile(), Spy([{"content": "ok"}]), default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True),
+        ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert "Always answer in haiku." in seen[0]
+
+
+def test_citation_check_nudges_on_unfetched_urls(tmp_path):
+    from agentic.loop import unfetched_urls
+    c = ctx(tmp_path)
+    c.fetched.add("https://docs.example.com/page")
+    text = "Fact [1] https://docs.example.com/page/. Other fact [2] (https://made.up/blog)."
+    assert unfetched_urls(text, c) == ["https://made.up/blog"]
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[-1]["content"] if messages[-1]["role"] == "user" else "")
+            return super().chat(messages, tools)
+    prof = Profile("r", "sys", ["read_file"], max_steps=6, checks=("citations",))
+    router = Spy([{"content": "Answer. Source: https://made.up/blog"}, {"content": "Answer with no sources."}])
+    out = run("t", prof, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), c, Audit(tmp_path / "a.jsonl"))
+    assert out == "Answer with no sources." and any("never fetched" in x for x in seen)
+    # one-shot: a second bad answer is accepted rather than looping forever
+    router = Spy([{"content": "A https://x.y/1"}, {"content": "B https://x.y/2"}])
+    assert run("t", prof, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl")) == "B https://x.y/2"
+
+
+def test_fetch_records_urls_for_citation_check(tmp_path, monkeypatch):
+    from agentic.tools import web
+    monkeypatch.setattr(web, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(web, "_resolve", lambda host: ["93.184.216.34"])
+    c = ToolContext(tmp_path.resolve(), http=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, headers={"content-type": "text/html"}, text="<p>hi</p>"))))
+    web.fetch_url(c, "http://example.com/a")
+    assert "http://example.com/a" in c.fetched
+
+
+def test_bad_tool_arguments_get_a_helpful_error(tmp_path):
+    router = ScriptedRouter([tool_msg("read_file", {"wrong_arg": 1}), {"content": "done"}])
+    run("t", profile(), router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path),
+        Audit(tmp_path / "a.jsonl"))
+    log = (tmp_path / "a.jsonl").read_text()
+    assert "tool_error" in log

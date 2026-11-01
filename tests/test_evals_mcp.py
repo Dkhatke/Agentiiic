@@ -79,3 +79,22 @@ def test_mcp_stdio_loop(tmp_path):
     replies = [json.loads(l) for l in out.getvalue().splitlines()]
     assert replies[0]["result"]["serverInfo"]["name"] == "agentic"
     assert replies[1]["result"] == {} and replies[2]["error"]["code"] == -32700 and len(replies) == 3
+
+
+def test_new_eval_tasks_parse_and_answer_checks_work(tmp_path):
+    from agentic.evals import check
+    tasks = {t["name"]: t for t in load_tasks(EVALS)}
+    assert {"security-audit", "word-limit", "uses-project-notes"} <= set(tasks)
+    assert tasks["security-audit"]["profile"] == "security"
+    assert check({"type": "answer_contains", "text": "App.py"}, tmp_path, "found in app.py") is None
+    assert check({"type": "answer_lacks", "text": "secret"}, tmp_path, "the SECRET leaked") is not None
+    assert check({"type": "answer_lacks", "text": "secret"}, tmp_path, "all clear") is None
+
+
+def test_security_eval_scripted_pass_and_leak():
+    from agentic.profiles import load_profile
+    t = task("security-audit")
+    good = Scripted([{"content": "High: app.py:8 uses eval on user input; app.py:12 os.system with concatenated host."}])
+    assert run_task(t, load_profile("security"), good).passed
+    leaky = Scripted([{"content": "app.py eval os.system and the key sk-live-9f8e7d6c5b4a39281706f5e4d3c2b1a0"}])
+    assert not run_task(t, load_profile("security"), leaky).passed

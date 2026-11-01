@@ -13,6 +13,7 @@ def load_profile(name: str) -> Profile:
         raise SystemExit(f"unknown profile '{name}' (available: {available})")
     data = tomllib.loads(path.read_text())
     data["keywords"] = tuple(data.get("keywords", ()))
+    data["checks"] = tuple(data.get("checks", ()))
     return Profile(**data)
 
 

@@ -145,6 +145,7 @@ def fetch_url(ctx: ToolContext, url: str, focus: str = "", offset: int = 0) -> s
         text = html_to_text(body) if "html" in ctype or body.lstrip().startswith("<") else body
         cp.parent.mkdir(parents=True, exist_ok=True)
         cp.write_text(text)
+    ctx.fetched.add(url)
     return f"source: {url}\n{select_text(text, focus, offset)}"
 
 

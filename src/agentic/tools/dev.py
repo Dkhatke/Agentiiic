@@ -125,7 +125,17 @@ def semantic_search(ctx: ToolContext, query: str) -> str:
     return _clip(embeddings.search(ctx.root, query, ctx.embedder, ctx.store))
 
 
+def remember(ctx: ToolContext, note: str) -> str:
+    from .. import notes
+    from ..safety import redact
+    if not note.strip():
+        raise ToolError("note is empty")
+    return notes.remember(ctx.root, redact(note)[:500])
+
+
 def register(reg: Registry) -> None:
+    reg.register(Tool("remember", "Save a short durable note about this project (a decision, convention or gotcha) "
+                      "that future runs will see. Not for secrets.", _obj({"note": _S}, ["note"]), Risk.WRITE, remember))
     reg.register(Tool("grep", "Search files for a regex; returns file:line: text.",
                       _obj({"pattern": _S, "path": _S}, ["pattern"]), Risk.READ, grep, untrusted=True))
     reg.register(Tool("semantic_search", "Find the code or text most related to a query by meaning (sends file text to the embeddings provider).",

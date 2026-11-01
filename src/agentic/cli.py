@@ -81,14 +81,13 @@ def cmd_eval(args) -> int:
     from .evals import load_tasks, run_task
     cfg = load_config()
     router = Router(cfg.providers, store=Store())
-    profile = load_profile(args.profile)
     tasks = load_tasks(Path(args.dir))
     if args.only:
         tasks = [t for t in tasks if t["name"] in args.only]
     passed = 0
     for t in tasks:
         try:
-            r = run_task(t, profile, router)
+            r = run_task(t, load_profile(t.get("profile", args.profile)), router)
         except RouterError as e:
             print(f"ERR   {t['name']}: {e}")
             continue

@@ -20,19 +20,48 @@ def _clip(text: str) -> str:
     return text if len(text) <= MAX_OUTPUT else text[:MAX_OUTPUT] + f"\n...[truncated {len(text) - MAX_OUTPUT} chars]"
 
 
-def read_file(ctx: ToolContext, path: str) -> str:
+def _suggest(p, root) -> str:
+    near = difflib.get_close_matches(p.name, [e.name for e in p.parent.iterdir()] if p.parent.is_dir() else [], n=3, cutoff=0.5)
+    return f" Did you mean: {', '.join(near)}?" if near else " Use list_dir to see what exists."
+
+
+def read_file(ctx: ToolContext, path: str, start_line: int = 0, end_line: int = 0) -> str:
+    p = ctx.resolve(path)
+    if PROTECTED.search(str(p)):
+        raise ToolError(f"protected file (secrets): {path}")
+    if p.is_dir():
+        raise ToolError(f"{path} is a directory; use list_dir to see its contents.")
+    if not p.is_file():
+        raise ToolError(f"file not found: {path}." + _suggest(p, ctx.root))
+    text = p.read_text(errors="replace")
+    try:
+        start, end = max(int(start_line), 0), max(int(end_line), 0)
+    except (TypeError, ValueError):
+        start = end = 0
+    if start or end:
+        lines = text.splitlines()
+        a, b = max(start, 1), (end or len(lines))
+        return _clip(f"[lines {a}-{min(b, len(lines))} of {len(lines)}]\n" + "\n".join(lines[a - 1:b]))
+    if len(text) > MAX_OUTPUT:
+        n = len(text.splitlines())
+        return text[:MAX_OUTPUT] + f"\n...[file has {n} lines and {len(text)} chars; call read_file with start_line/end_line to read the rest]"
+    return text
+
+
+def count_words(ctx: ToolContext, path: str) -> str:
     p = ctx.resolve(path)
     if PROTECTED.search(str(p)):
         raise ToolError(f"protected file (secrets): {path}")
     if not p.is_file():
-        raise ToolError(f"not a file: {path}")
-    return _clip(p.read_text(errors="replace"))
+        raise ToolError(f"file not found: {path}." + _suggest(p, ctx.root))
+    text = p.read_text(errors="replace")
+    return f"{len(text.split())} words, {len(text)} characters, {len(text.splitlines())} lines"
 
 
 def list_dir(ctx: ToolContext, path: str = ".") -> str:
     p = ctx.resolve(path)
     if not p.is_dir():
-        raise ToolError(f"not a directory: {path}")
+        raise ToolError(f"not a directory: {path}." + (" It is a file; use read_file." if p.is_file() else _suggest(p, ctx.root)))
     entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
     return "\n".join(e.name + ("/" if e.is_dir() else "") for e in entries if e.name != ".git") or "(empty)"
 
@@ -86,6 +115,10 @@ def run_shell(ctx: ToolContext, command: str) -> str:
         raise ToolError("command refers to a protected secrets file (.env, keys); not allowed")
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
     argv = wrap_command(command, ctx.root, ctx.sandbox_network) if ctx.sandbox else None
+    if argv:  # the sandbox only allows writes under the workspace, so give tools a temp dir there
+        tmp = ctx.root / ".agentic" / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        env["TMPDIR"] = str(tmp)
     try:
         r = subprocess.run(argv or command, shell=argv is None, cwd=ctx.root, env=env, capture_output=True,
                            text=True, timeout=ctx.shell_timeout)
@@ -107,13 +140,15 @@ _S = {"type": "string"}
 
 def default_registry() -> Registry:
     reg = Registry()
-    reg.register(Tool("read_file", "Read a text file in the workspace.", _obj({"path": _S}, ["path"]), Risk.READ, read_file, untrusted=True))
+    reg.register(Tool("read_file", "Read a text file in the workspace. Large files are cut off: pass start_line/end_line to read a section.", _obj({"path": _S, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, ["path"]), Risk.READ, read_file, untrusted=True))
+    reg.register(Tool("count_words", "Count words, characters and lines in a file (for word limits).", _obj({"path": _S}, ["path"]), Risk.READ, count_words))
     reg.register(Tool("list_dir", "List a directory in the workspace.", _obj({"path": _S}, []), Risk.READ, list_dir))
     reg.register(Tool("write_file", "Create or overwrite a file.", _obj({"path": _S, "content": _S}, ["path", "content"]), Risk.WRITE, write_file))
     reg.register(Tool("edit_file", "Replace one exact occurrence of text in a file.", _obj({"path": _S, "old": _S, "new": _S}, ["path", "old", "new"]), Risk.WRITE, edit_file))
     reg.register(Tool("run_shell", "Run a shell command in the workspace.", _obj({"command": _S}, ["command"]), Risk.DESTRUCTIVE, run_shell, _shell_risk))
     from . import dev
     dev.register(reg)
-    from . import web
+    from . import security, web
     web.register(reg)
+    security.register(reg)
     return reg

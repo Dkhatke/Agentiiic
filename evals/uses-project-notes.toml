@@ -1,0 +1,12 @@
+prompt = "Create greet.py with a function greet(name) that returns a greeting, and print greet('Ada') at the bottom. Follow this project's conventions."
+max_calls = 12
+[files]
+"AGENTS.md" = "# Project conventions\n- Python code uses a docstring on every function.\n- Greetings must start with the word 'Salutations'.\n"
+[[checks]]
+type = "command_contains"
+run = "python3 greet.py"
+text = "Salutations"
+[[checks]]
+type = "file_contains"
+path = "greet.py"
+text = '"""'
