@@ -32,7 +32,7 @@ def live(tmp_path, monkeypatch):
     monkeypatch.setattr("agentic.audit.STATE_DIR", tmp_path / "state")
     app = server.App(token="tok", store_path=tmp_path / "db.sqlite",
                      router_factory=lambda cfg, store: Scripted(
-                         [call("write_file", {"path": "x.txt", "content": "hi"}), {"content": "all done"}]))
+                         [call("write_file", {"path": "x.txt", "content": "hi"}), {"content": "all done"}, {"content": "all done"}]))
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(app))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_port}", tmp_path

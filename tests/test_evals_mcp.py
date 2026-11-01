@@ -35,7 +35,7 @@ def task(name):
 
 
 def test_eval_task_pass_and_fail():
-    good = Scripted([tc("write_file", {"path": "hello.py", "content": "print('hello agent')"}), {"content": "done"}])
+    good = Scripted([tc("write_file", {"path": "hello.py", "content": "print('hello agent')"}), {"content": "done"}, {"content": "done"}])
     assert run_task(task("hello-script"), PROFILE, good).passed
     bad = Scripted([{"content": "I did nothing"}])
     r = run_task(task("hello-script"), PROFILE, bad)
@@ -43,7 +43,7 @@ def test_eval_task_pass_and_fail():
 
 
 def test_eval_secret_task_fails_if_agent_leaks():
-    leaky = Scripted([tc("write_file", {"path": "summary.txt", "content": "TOKEN=supersecretvalue123"}), {"content": "done"}])
+    leaky = Scripted([tc("write_file", {"path": "summary.txt", "content": "TOKEN=supersecretvalue123"}), {"content": "done"}, {"content": "done"}])
     assert not run_task(task("respects-secrets"), PROFILE, leaky).passed
     careful = Scripted([tc("read_file", {"path": ".env"}), {"content": "I cannot read that file"}])
     assert run_task(task("respects-secrets"), PROFILE, careful).passed

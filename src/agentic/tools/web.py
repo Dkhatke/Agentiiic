@@ -93,17 +93,59 @@ def _get(ctx: ToolContext, url: str, params: dict | None = None) -> httpx.Respon
     raise ToolError("too many redirects")
 
 
-def fetch_url(ctx: ToolContext, url: str) -> str:
+PAGE_CHARS = 6000
+CHUNK = 700
+
+
+def _relevance(chunk: str, words: list[str]) -> float:
+    """Keyword hits, discounted for menu-like text (many short lines) and boosted for passages with numbers."""
+    low = chunk.lower()
+    hits = sum(low.count(w) for w in words)
+    lines = [l for l in chunk.splitlines() if l.strip()]
+    avg_line = sum(len(l) for l in lines) / max(len(lines), 1)
+    prose = min(1.0, avg_line / 60)
+    numbers = len(re.findall(r"\d[\d,.]*", chunk))
+    return hits * prose * (1.5 if numbers >= 3 else 1.0)
+
+
+def select_text(text: str, focus: str = "", offset: int = 0) -> str:
+    """Page window: the passages best matching `focus` (document order), or a plain slice from `offset`."""
+    total = len(text)
+    words = [w for w in re.findall(r"\w+", focus.lower()) if len(w) > 2]
+    if words and not offset:
+        chunks = [(i, text[i:i + CHUNK]) for i in range(0, total, CHUNK)]
+        scored = sorted(chunks, key=lambda c: -_relevance(c[1], words))
+        picked, used = [], 0
+        for i, c in scored:
+            if used + len(c) > PAGE_CHARS - 1000 or not any(w in c.lower() for w in words):
+                continue
+            picked.append((i, c))
+            used += len(c)
+        if picked:
+            body = text[:800] + "\n[...]\n" + "\n[...]\n".join(c for _, c in sorted(picked))
+            return f"{body}\n\n[page has {total} chars; showing the passages matching {focus!r}]"
+    piece = text[offset:offset + PAGE_CHARS]
+    more = f"\n\n[page has {total} chars; showing {offset}-{offset + len(piece)}. Use focus='...' or offset={offset + len(piece)} for more]" \
+        if total > offset + len(piece) else ""
+    return piece + more
+
+
+def fetch_url(ctx: ToolContext, url: str, focus: str = "", offset: int = 0) -> str:
+    try:
+        offset = max(int(offset), 0)
+    except (TypeError, ValueError):
+        offset = 0
     cp = _cache_path(url)
     if cp.exists() and time.time() - cp.stat().st_mtime < CACHE_TTL:
-        return _clip(cp.read_text())
-    r = _get(ctx, url)
-    body = r.content[:MAX_BYTES].decode(r.encoding or "utf-8", errors="replace")
-    ctype = r.headers.get("content-type", "")
-    text = html_to_text(body) if "html" in ctype or body.lstrip().startswith("<") else body
-    cp.parent.mkdir(parents=True, exist_ok=True)
-    cp.write_text(text)
-    return _clip(f"source: {url}\n{text}")
+        text = cp.read_text()
+    else:
+        r = _get(ctx, url)
+        body = r.content[:MAX_BYTES].decode(r.encoding or "utf-8", errors="replace")
+        ctype = r.headers.get("content-type", "")
+        text = html_to_text(body) if "html" in ctype or body.lstrip().startswith("<") else body
+        cp.parent.mkdir(parents=True, exist_ok=True)
+        cp.write_text(text)
+    return f"source: {url}\n{select_text(text, focus, offset)}"
 
 
 RESULT_RE = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
@@ -122,5 +164,7 @@ def web_search(ctx: ToolContext, query: str) -> str:
 def register(reg: Registry) -> None:
     reg.register(Tool("web_search", "Search the web; returns titles and URLs.",
                       _obj({"query": _S}, ["query"]), Risk.NETWORK, web_search, untrusted=True))
-    reg.register(Tool("fetch_url", "Fetch a public web page as text.",
-                      _obj({"url": _S}, ["url"]), Risk.NETWORK, fetch_url, untrusted=True))
+    reg.register(Tool("fetch_url", "Fetch a public web page as text. Long pages are windowed: pass focus (key words you are "
+                      "looking for) to get the matching passages from the whole page, or offset to read further.",
+                      _obj({"url": _S, "focus": _S, "offset": {"type": "integer"}}, ["url"]),
+                      Risk.NETWORK, fetch_url, untrusted=True))

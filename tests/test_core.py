@@ -411,3 +411,168 @@ def test_router_waits_and_retries_transient_failures_only():
     with pytest.raises(RouterError):
         r2.chat([])
     assert len(sleeps) == n
+
+
+def test_verify_nudge_after_unverified_edit(tmp_path):
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[-1]["content"] if messages[-1]["role"] == "user" else "")
+            return super().chat(messages, tools)
+    prof = Profile("t", "sys", ["write_file", "run_shell"], max_steps=8)
+    router = Spy([tool_msg("write_file", {"path": "a.py", "content": "print(1)"}), {"content": "done"},
+                  tool_msg("run_shell", {"command": "python3 a.py"}), {"content": "verified"}])
+    out = run("t", prof, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path),
+              Audit(tmp_path / "a.jsonl"))
+    assert out == "verified" and any("have not run anything" in x for x in seen)
+    # no nudge when the agent already ran something after its last edit
+    router = Spy([tool_msg("write_file", {"path": "a.py", "content": "print(1)"}),
+                  tool_msg("run_shell", {"command": "python3 a.py"}), {"content": "ok"}])
+    seen.clear()
+    run("t", prof, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert not any("have not run anything" in x for x in seen)
+
+
+def test_plan_first_only_for_long_tasks(tmp_path):
+    class Spy(ScriptedRouter):
+        def __init__(self, r):
+            super().__init__(r)
+            self.toolsets = []
+
+        def chat(self, messages, tools=None):
+            self.toolsets.append(tools)
+            return super().chat(messages, tools)
+    prof = Profile("t", "sys", ["read_file"], max_steps=5, plan=True)
+    long_task = "please " + "do something quite involved " * 6
+    r = Spy([{"content": "1. a\n2. verify"}, {"content": "done"}])
+    run(long_task, prof, r, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert r.toolsets[0] is None and r.toolsets[1]            # plan call has no tools
+    r = Spy([{"content": "done"}])
+    run("short task", prof, r, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert len(r.toolsets) == 1
+
+
+def test_compaction_shrinks_old_write_arguments():
+    from agentic.loop import compact
+    big = json.dumps({"path": "a.py", "content": "z" * 30000})
+    msgs = [{"role": "system", "content": "s"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "1", "type": "function", "function": {"name": "write_file", "arguments": big}}]},
+            {"role": "tool", "tool_call_id": "1", "content": "ok"}] + [{"role": "user", "content": "u" * 20000}] * 8
+    compact(msgs)
+    args = json.loads(msgs[1]["tool_calls"][0]["function"]["arguments"])
+    assert args["path"] == "a.py" and len(args["content"]) < 300
+
+
+def test_edit_file_tolerates_whitespace_and_hints(tmp_path):
+    from agentic.tools.builtin import edit_file
+    f = tmp_path / "a.py"
+    f.write_text("def f():   \n    return 1  \n\ndef g():\n    return 2\n")
+    assert "ignoring trailing whitespace" in edit_file(ctx(tmp_path), "a.py", "def f():\n    return 1", "def f():\n    return 10")
+    assert "return 10" in f.read_text() and "def g" in f.read_text()
+    with pytest.raises(ToolError) as e:
+        edit_file(ctx(tmp_path), "a.py", "def gg():\n    return 2", "x")
+    assert "Closest line" in str(e.value)
+    f.write_text("x = 1\nx = 1\n")
+    with pytest.raises(ToolError):
+        edit_file(ctx(tmp_path), "a.py", "x = 1", "x = 2")       # ambiguous
+
+
+def test_repo_map_ranks_by_references(tmp_path):
+    from agentic.tools.dev import repo_map
+    (tmp_path / "util.py").write_text("def helper():\n    pass\n")
+    (tmp_path / "aaa.py").write_text("def lonely():\n    pass\n")
+    (tmp_path / "m1.py").write_text("from util import helper\nhelper()\n")
+    (tmp_path / "m2.py").write_text("import util\nutil.helper()\n")
+    out = repo_map(ctx(tmp_path)).splitlines()
+    assert out[0].startswith("util.py") and "referenced by 2 others" in out[0]
+    assert [l for l in out if not l.startswith(" ")].index(next(l for l in out if l.startswith("aaa.py"))) > 0
+
+
+def test_research_playbook_loads(tmp_path):
+    from agentic.tools.dev import load_playbook
+    from agentic.profiles import load_profile
+    assert "Cross-check" in load_playbook(ctx(tmp_path), "research")
+    assert "load_playbook" in load_profile("researcher").tools
+
+
+def test_retry_continues_when_one_provider_budget_is_spent_but_another_is_transient(tmp_path):
+    from agentic.store import Store
+    store = Store(tmp_path / "db.sqlite")
+    store.add_usage("g", calls=5)
+    sleeps, n = [], {"n": 0}
+
+    def handler(req):
+        n["n"] += 1
+        return httpx.Response(429) if n["n"] == 1 else httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    clock = {"t": 0.0}
+    ps = [Provider("spent", "http://a/v1", "m", quota="g", daily_calls=5), Provider("b", "http://b/v1", "m")]
+    r = Router(ps, httpx.Client(transport=httpx.MockTransport(handler)), store=store, cooldown=5, clock=lambda: clock["t"],
+               sleep=lambda s: (sleeps.append(s), clock.__setitem__("t", clock["t"] + s)))
+    assert r.chat([]).provider == "b" and len(sleeps) == 1
+    # only hard failures (spent budget): no waiting
+    r2 = Router([ps[0]], httpx.Client(transport=httpx.MockTransport(handler)), store=store, sleep=lambda s: sleeps.append(s))
+    with pytest.raises(RouterError):
+        r2.chat([])
+    assert len(sleeps) == 1
+
+
+def test_compaction_respects_a_tight_budget_even_for_recent_outputs():
+    from agentic.loop import compact
+    msgs = [{"role": "system", "content": "s" * 500}, {"role": "user", "content": "task"}] + \
+           [{"role": "tool", "tool_call_id": str(i), "content": "p" * 8000} for i in range(3)]
+    compact(msgs, budget=9000)
+    assert sum(len(m["content"]) for m in msgs) <= 9000 + 100
+    assert msgs[0]["content"] == "s" * 500 and msgs[1]["content"] == "task"   # never touch system/user
+
+
+def test_router_context_budget_and_413_skip():
+    ps = [Provider("a", "http://a/v1", "m", max_input_tokens=7000), Provider("b", "http://b/v1", "m")]
+    r = Router(ps, httpx.Client(transport=httpx.MockTransport(
+        lambda q: httpx.Response(413) if "a" in str(q.url.host) and str(q.url.host) == "a" else
+        httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}))), sleep=lambda s: None)
+    assert r.context_budget == 7000 * 3 - 6000
+    assert r.chat([]).provider == "b"
+    assert Router([Provider("x", "http://x/v1", "m")]).context_budget is None
+
+
+def test_last_step_forces_a_final_answer_without_tools(tmp_path):
+    class Spy(ScriptedRouter):
+        def __init__(self, r):
+            super().__init__(r)
+            self.toolsets = []
+
+        def chat(self, messages, tools=None):
+            self.toolsets.append(tools)
+            return super().chat(messages, tools)
+    prof = Profile("t", "sys", ["read_file"], max_steps=5)
+    router = Spy([tool_msg("read_file", {"path": f"f{i}"}) for i in range(4)] + [{"content": "best-effort answer"}])
+    out = run("t", prof, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path),
+              Audit(tmp_path / "a.jsonl"))
+    assert out == "best-effort answer" and router.toolsets[-1] is None and all(router.toolsets[:-1])
+
+
+def test_fetch_url_focus_finds_deep_passages_and_pages(tmp_path, monkeypatch):
+    from agentic.tools import web
+    monkeypatch.setattr(web, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(web, "_resolve", lambda host: ["93.184.216.34"])
+    filler = "".join(f"<p>Unrelated paragraph number {i} about nothing in particular at all.</p>" for i in range(400))
+    page = f"<html><body><p>Intro text</p>{filler}<p>The free tier allows 30 requests per minute and 1000 requests per day.</p>{filler}</body></html>"
+    c = ToolContext(tmp_path.resolve(), http=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, headers={"content-type": "text/html"}, text=page))))
+    plain = web.fetch_url(c, "http://example.com/p")
+    assert "30 requests per minute" not in plain and "offset=" in plain          # buried past the first window
+    focused = web.fetch_url(c, "http://example.com/p", focus="free tier requests per minute")
+    assert "30 requests per minute" in focused and len(focused) < 8000
+    nxt = web.fetch_url(c, "http://example.com/p", offset="6000")                  # string offset from a text-mode model
+    assert nxt != plain
+
+
+def test_fetch_focus_prefers_content_over_menus(tmp_path, monkeypatch):
+    from agentic.tools import web
+    menu = "\n".join(["Rate Limits", "Tokens", "Free", "Plan", "Limits", "Docs", "Models", "Billing"] * 40)
+    content = "On the free plan, requests are limited to 30 per minute, 14400 per day and 6000 tokens per minute for most models."
+    text = "Header\n" + menu + "\n" + ("filler sentence about nothing. " * 80) + "\n" + content + "\n" + menu
+    out = web.select_text(text, "free plan limits requests per minute tokens")
+    assert "14400 per day" in out

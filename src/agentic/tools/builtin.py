@@ -1,6 +1,7 @@
 """Built-in tools: filesystem and shell, all confined to the workspace."""
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import shlex
@@ -50,10 +51,25 @@ def edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
     if PROTECTED.search(str(p)):
         raise ToolError(f"protected file (secrets): {path}")
     text = p.read_text()
-    if text.count(old) != 1:
-        raise ToolError(f"'old' must match exactly once (found {text.count(old)})")
-    p.write_text(text.replace(old, new))
-    return f"edited {path}"
+    if text.count(old) == 1:
+        p.write_text(text.replace(old, new))
+        return f"edited {path}"
+    # tolerate trailing-whitespace / line-ending differences, a common model slip
+    lines, want = text.split("\n"), old.replace("\r\n", "\n").split("\n")
+    want = [l.rstrip() for l in want]
+    hits = [i for i in range(len(lines) - len(want) + 1) if [l.rstrip() for l in lines[i:i + len(want)]] == want]
+    if len(hits) == 1:
+        i = hits[0]
+        p.write_text("\n".join(lines[:i] + new.replace("\r\n", "\n").split("\n") + lines[i + len(want):]))
+        return f"edited {path} (matched ignoring trailing whitespace)"
+    if text.count(old) > 1 or len(hits) > 1:
+        raise ToolError("'old' matches more than once; include more surrounding lines to make it unique")
+    close = difflib.get_close_matches(want[0].strip(), [l.strip() for l in lines], n=1, cutoff=0.6)
+    hint = ""
+    if close:
+        n = next(i for i, l in enumerate(lines, 1) if l.strip() == close[0])
+        hint = f" Closest line is {n}: {close[0][:120]!r}. Re-read the file and copy the text exactly."
+    raise ToolError("'old' not found." + hint)
 
 
 def _names_protected_file(command: str) -> bool:

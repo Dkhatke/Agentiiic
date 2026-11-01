@@ -26,6 +26,7 @@ name = "groq-qwen"
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
 model = "qwen/qwen3.8-27b"   # fallback
+max_input_tokens = 7000            # Groq free tier ITPM limit for this model
 
 [[providers]]
 name = "or-coder"
@@ -87,6 +88,7 @@ class Provider:
     model: str
     api_key_env: str | None = None
     daily_calls: int | None = None  # skip this provider once its quota group has been called this many times today
+    max_input_tokens: int | None = None  # provider's per-request input limit; the loop shrinks context to fit
     quota: str | None = None        # shared quota group (e.g. all OpenRouter free models share one account limit)
     tool_mode: str = "native"  # "native" = API tool-calling; "text" = works with any model
 

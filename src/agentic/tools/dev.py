@@ -19,22 +19,47 @@ PROTECTED_BRANCHES = {"main", "master"}
 MAX_FILES = 200
 
 
+NAME_RE = re.compile(r"(?:def|class|function|interface|type|const)\s+(\w+)")
+RANKED_DETAIL = 40  # files shown with symbols when the repo is large
+
+
 def repo_map(ctx: ToolContext, path: str = ".") -> str:
+    """Files ranked by how much other code references their definitions (aider-style, regex not tree-sitter)."""
     base = ctx.resolve(path)
-    lines, count = [], 0
+    files, count = [], 0
     for f in sorted(base.rglob("*")):
         if any(part in SKIP_DIRS for part in f.relative_to(ctx.root).parts) or not f.is_file():
             continue
+        if PROTECTED.search(str(f)):
+            continue
         count += 1
         if count > MAX_FILES:
-            lines.append(f"...[more than {MAX_FILES} files, narrow `path`]")
             break
-        lines.append(str(f.relative_to(ctx.root)))
+        files.append(f)
+    symbols: dict[str, list[tuple[str, str]]] = {}  # rel path -> [(name, signature line)]
+    idents: dict[str, set[str]] = {}
+    for f in files:
+        rel = str(f.relative_to(ctx.root))
         pat = SYMBOLS.get(f.suffix)
-        if pat and f.stat().st_size < 200_000:
-            for line in f.read_text(errors="replace").splitlines():
-                if pat.match(line):
-                    lines.append("    " + line.strip()[:100])
+        if not pat or f.stat().st_size > 200_000:
+            continue
+        text = f.read_text(errors="replace")
+        idents[rel] = set(re.findall(r"\w+", text))
+        syms = []
+        for line in text.splitlines():
+            if pat.match(line) and (m := NAME_RE.search(line)):
+                syms.append((m.group(1), line.strip()[:100]))
+        symbols[rel] = syms
+    score = {rel: sum(1 for name, _ in syms for other, ids in idents.items() if other != rel and name in ids)
+             for rel, syms in symbols.items()}
+    ordered = sorted((str(f.relative_to(ctx.root)) for f in files), key=lambda r: (-score.get(r, 0), r))
+    lines = []
+    for i, rel in enumerate(ordered):
+        lines.append(rel + (f"  (referenced by {score[rel]} others)" if score.get(rel) else ""))
+        if i < RANKED_DETAIL:
+            lines += ["    " + sig for _, sig in symbols.get(rel, [])]
+    if count > MAX_FILES:
+        lines.append(f"...[more than {MAX_FILES} files, narrow `path`]")
     return _clip("\n".join(lines) or "(empty)")
 
 

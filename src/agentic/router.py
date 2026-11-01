@@ -39,6 +39,12 @@ class Router:
         self._blocked_until: dict[str, float] = {}
         self.calls = 0
 
+    @property
+    def context_budget(self) -> int | None:
+        """Characters of context that fit the tightest declared provider limit (about 3 chars/token, minus overhead)."""
+        limits = [p.max_input_tokens for p in self.providers if p.max_input_tokens]
+        return max(min(limits) * 3 - 6000, 4000) if limits else None
+
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> Reply:
         for attempt in range(self.retries + 1):
             try:
@@ -53,21 +59,21 @@ class Router:
     def _try_all(self, messages, tools) -> Reply:
         if not self.providers:
             raise RouterError("no usable providers (set an API key env var or run a local model)")
-        errors, retryable = [], True
+        errors, retryable = [], False  # retry only if some provider may recover by waiting
         for p in self.providers:
             if self._blocked_until.get(p.name, 0) > self.clock():
                 errors.append(f"{p.name}: cooling down")
+                retryable = True
                 continue
             if self.store and p.daily_calls and self.store.calls_today(p.quota or p.name) >= p.daily_calls:
                 errors.append(f"{p.name}: daily budget reached")
-                retryable = False
                 continue
             try:
                 return self._call(p, messages, tools)
             except _Skip as e:
                 self._blocked_until[p.name] = self.clock() + self.cooldown
                 errors.append(f"{p.name}: {e}")
-                retryable = retryable and e.transient
+                retryable = retryable or e.transient
         raise RouterError("all providers failed: " + "; ".join(errors), retryable)
 
     def _call(self, p: Provider, messages, tools) -> Reply:
@@ -87,6 +93,8 @@ class Router:
             raise _Skip(f"HTTP {r.status_code}", transient=True)
         if r.status_code in AUTH_FAILED:
             raise _Skip(f"HTTP {r.status_code}")
+        if r.status_code == 413:
+            raise _Skip("request too large for this provider")
         if r.status_code >= 400:
             raise _Skip(f"HTTP {r.status_code}: {r.text[:200]}")
         data = r.json()
