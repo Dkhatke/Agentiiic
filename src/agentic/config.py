@@ -12,13 +12,32 @@ STATE_DIR = Path(os.environ.get("AGENTIC_STATE", Path.home() / ".local/state/age
 SAMPLE_CONFIG = """\
 # Providers are tried in order. Any OpenAI-compatible endpoint works.
 # Keys are read from environment variables, never stored in this file.
+# One OpenRouter key serves every entry below; free models rate-limit often, so the chain falls through.
+# Free model IDs change: list current ones with `agentic models`.
 
 [[providers]]
-name = "openrouter"
+name = "or-coder"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
-model = "openrouter/free"          # change to any ':free' model from openrouter.ai/models
-daily_calls = 200                  # stay inside the free tier; omit for no cap
+model = "cohere/north-mini-code:free"   # coding-agent model, 256K context
+
+[[providers]]
+name = "or-gemma"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "google/gemma-4-31b-it:free"   # strong general model, native function calling
+
+[[providers]]
+name = "or-nemotron"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "nvidia/nemotron-3.5-lightning:free"   # fast, 1M context
+
+[[providers]]
+name = "or-auto"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "openrouter/free"   # OpenRouter picks any available free model
 
 [[providers]]
 name = "ollama"

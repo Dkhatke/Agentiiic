@@ -104,6 +104,22 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+def cmd_models(_) -> int:
+    import httpx
+    try:
+        data = httpx.get("https://openrouter.ai/api/v1/models", timeout=20).json()["data"]
+    except (httpx.HTTPError, KeyError, ValueError) as e:
+        print(f"could not fetch model list: {e}")
+        return 1
+    free = [m for m in data if m["pricing"].get("prompt") == "0" and m["pricing"].get("completion") == "0"
+            and (m.get("architecture") or {}).get("output_modalities") == ["text"]
+            and "tools" in (m.get("supported_parameters") or [])]
+    for m in sorted(free, key=lambda m: -m.get("context_length", 0)):
+        print(f"{m['id']:52} {m.get('context_length', 0):>8} ctx")
+    print(f"\n{len(free)} free tool-calling chat models (put an id in `model =` in {CONFIG_PATH})")
+    return 0
+
+
 def cmd_providers(_) -> int:
     for p in load_config().providers:
         print(f"{'ok ' if p.usable else 'no '} {p.name:12} {p.model}  ({p.base_url})"
@@ -148,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     mc.set_defaults(fn=cmd_mcp)
     sub.add_parser("tasks", help="list recent tasks").set_defaults(fn=cmd_tasks)
     sub.add_parser("usage", help="today's provider usage").set_defaults(fn=cmd_usage)
+    sub.add_parser("models", help="list free tool-calling models on OpenRouter").set_defaults(fn=cmd_models)
     sub.add_parser("providers", help="show configured providers").set_defaults(fn=cmd_providers)
     sub.add_parser("init", help="write a sample config").set_defaults(fn=cmd_init)
     args = ap.parse_args(argv)

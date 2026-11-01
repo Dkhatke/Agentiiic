@@ -60,7 +60,7 @@ Optional later ideas: native Anthropic provider adapter, model-based profile rou
 - The evals have only been run with scripted fake models; real pass rates are unknown until a real model is connected.
 - The embeddings endpoint and model id were taken from the user's OpenRouter snippet and are untested live (no key yet). Indexed file text is sent to that provider, hence the approval prompt; set `enabled = false` under `[embeddings]` to turn it off.
 - Not yet run against a real model (no key or Ollama yet). Everything is covered by mocked tests.
-- `openrouter/free` as the default model name is unverified; change it to a real `:free` model.
+- Default provider chain (verified against OpenRouter's public model list on 2026-11-01): `cohere/north-mini-code:free`, `google/gemma-4-31b-it:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, then local Ollama. Free IDs change and some are retired (a few listed "going away"), so `agentic models` lists current free tool-calling models. One OpenRouter key serves the whole chain; the free-tier rate limit is account-wide, so per-provider `daily_calls` counters don't add up across entries.
 - The sandbox restricts writes and network, not reads. Each shell command still asks for approval.
 - The sandbox only works on macOS.
 - `web_search` scrapes DuckDuckGo's HTML page, which can change layout or rate-limit; swap in SearXNG or a keyed API later if it breaks.
