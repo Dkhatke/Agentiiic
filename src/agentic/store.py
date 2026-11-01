@@ -11,6 +11,8 @@ from .config import STATE_DIR
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (day TEXT, provider TEXT, calls INTEGER DEFAULT 0, tokens INTEGER DEFAULT 0,
                                   PRIMARY KEY (day, provider));
+CREATE TABLE IF NOT EXISTS chunks (workspace TEXT, path TEXT, mtime REAL, line INTEGER, text TEXT, vec TEXT);
+CREATE INDEX IF NOT EXISTS chunks_ws ON chunks (workspace, path);
 CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT, profile TEXT, workspace TEXT,
                                   status TEXT, messages TEXT, created REAL, updated REAL);
 """
@@ -65,3 +67,27 @@ class Store:
 
     def list_tasks(self, limit: int = 15) -> list[tuple]:
         return self.db.execute("SELECT id, status, profile, task FROM tasks ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+    # embedding index
+    def chunk_mtime(self, ws: str, path: str) -> float | None:
+        row = self.db.execute("SELECT mtime FROM chunks WHERE workspace = ? AND path = ? LIMIT 1", (ws, path)).fetchone()
+        return row[0] if row else None
+
+    def chunk_count(self, ws: str, path: str) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM chunks WHERE workspace = ? AND path = ?", (ws, path)).fetchone()[0]
+
+    def replace_chunks(self, ws: str, path: str, mtime: float, chunks: list[tuple[int, str, list[float]]]) -> None:
+        self.db.execute("DELETE FROM chunks WHERE workspace = ? AND path = ?", (ws, path))
+        self.db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?)",
+                            [(ws, path, mtime, ln, t, json.dumps(v)) for ln, t, v in chunks])
+        self.db.commit()
+
+    def prune_chunks(self, ws: str, keep: set[str]) -> None:
+        for (p,) in self.db.execute("SELECT DISTINCT path FROM chunks WHERE workspace = ?", (ws,)).fetchall():
+            if p not in keep:
+                self.db.execute("DELETE FROM chunks WHERE workspace = ? AND path = ?", (ws, p))
+        self.db.commit()
+
+    def all_chunks(self, ws: str):
+        for p, ln, t, v in self.db.execute("SELECT path, line, text, vec FROM chunks WHERE workspace = ?", (ws,)):
+            yield p, ln, t, json.loads(v)

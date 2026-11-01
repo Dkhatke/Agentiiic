@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .audit import Audit
 from .config import STATE_DIR, load_config
+from .embeddings import Embedder
 from .loop import run
 from .orchestrator import select_profile
 from .permissions import Gate, Mode
@@ -99,7 +100,8 @@ class App:
             store = self.store()
             ask = lambda summary: self._ask(session, summary)  # noqa: E731
             gate = Gate(Mode(mode or profile.mode or "ask-on-write"), ask)
-            ctx = ToolContext(ws, cfg.limits.shell_timeout, cfg.sandbox.enabled, cfg.sandbox.network)
+            ctx = ToolContext(ws, cfg.limits.shell_timeout, cfg.sandbox.enabled, cfg.sandbox.network,
+                              embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store)
             profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
             out = run(task, profile, self.router_factory(cfg, store), default_registry(), gate, ctx,
                       Audit(), cfg.limits.max_model_calls, on_event=lambda e: session.emit("tool", text=e),

@@ -26,6 +26,8 @@ class ToolContext:
     sandbox_network: bool = False
     allow_main_commit: bool = False
     http: object | None = None  # injectable httpx.Client (tests)
+    embedder: object | None = None  # embeddings.Embedder, set when configured
+    store: object | None = None
 
     def resolve(self, path: str) -> Path:
         """Resolve a path and refuse anything outside the workspace root."""

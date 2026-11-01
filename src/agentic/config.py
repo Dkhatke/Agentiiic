@@ -31,6 +31,10 @@ max_steps = 25
 max_model_calls = 60
 shell_timeout = 60
 
+[embeddings]                       # optional semantic search; sends file text to this provider
+model = "nvidia/nemotron-3.5-embed-1b:free"
+enabled = true
+
 [sandbox]                          # macOS: shell can only write in the workspace
 enabled = true
 network = false                    # true lets shell commands reach the internet
@@ -56,6 +60,22 @@ class Provider:
 
 
 @dataclass
+class EmbeddingConfig:
+    base_url: str = "https://openrouter.ai/api/v1"
+    model: str = "nvidia/nemotron-3.5-embed-1b:free"
+    api_key_env: str | None = "OPENROUTER_API_KEY"
+    enabled: bool = True
+
+    @property
+    def api_key(self) -> str | None:
+        return os.environ.get(self.api_key_env) if self.api_key_env else None
+
+    @property
+    def usable(self) -> bool:
+        return self.enabled and (self.api_key_env is None or bool(self.api_key))
+
+
+@dataclass
 class Limits:
     max_steps: int = 25
     max_model_calls: int = 60
@@ -73,6 +93,7 @@ class Config:
     providers: list[Provider] = field(default_factory=list)
     limits: Limits = field(default_factory=Limits)
     sandbox: Sandbox = field(default_factory=Sandbox)
+    embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -81,4 +102,5 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         providers=[Provider(**p) for p in data.get("providers", [])],
         limits=Limits(**data.get("limits", {})),
         sandbox=Sandbox(**data.get("sandbox", {})),
+        embeddings=EmbeddingConfig(**data.get("embeddings", {})),
     )

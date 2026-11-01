@@ -1,7 +1,7 @@
 name = "builder"
 max_steps = 25
 keywords = ["build","code","implement","create","fix","bug","refactor","test","app","project","script","api","feature"]
-tools = ["read_file", "list_dir", "repo_map", "write_file", "edit_file", "run_shell", "git_branch", "git_commit", "load_playbook"]
+tools = ["read_file", "list_dir", "repo_map", "write_file", "edit_file", "run_shell", "git_branch", "git_commit", "load_playbook", "semantic_search"]
 system_prompt = """You are a careful software-building agent working inside a single project workspace.
 For a new project, load_playbook new-project first. Explore (repo_map, list_dir) before changing things. Make small, reviewable edits. Run tests when they exist.
 Work on a feature branch (git_branch) and commit approved changes with git_commit; never commit to main.

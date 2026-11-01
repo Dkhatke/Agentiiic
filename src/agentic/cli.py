@@ -10,6 +10,7 @@ from .loop import run
 from .permissions import Gate, Mode
 from .orchestrator import select_profile
 from .profiles import all_profiles, load_profile
+from .embeddings import Embedder
 from .router import Router, RouterError
 from .store import Store
 from .tools import ToolContext, default_registry
@@ -31,7 +32,8 @@ def cmd_run(args) -> int:
         task_id = store.create_task(args.task, profile.name, str(Path(args.workspace).resolve()))
     print(f"task #{task_id}  (resume later with: agentic resume {task_id})")
     ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout,
-                      cfg.sandbox.enabled, cfg.sandbox.network)
+                      cfg.sandbox.enabled, cfg.sandbox.network,
+                      embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store)
     profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
     try:
         out = run(args.task, profile, router, default_registry(), Gate(mode, _ask), ctx,

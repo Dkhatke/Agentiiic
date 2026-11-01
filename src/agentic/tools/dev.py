@@ -69,7 +69,16 @@ def load_playbook(ctx: ToolContext, name: str = "") -> str:
     return (PLAYBOOK_DIR / f"{name}.md").read_text()
 
 
+def semantic_search(ctx: ToolContext, query: str) -> str:
+    from .. import embeddings
+    if not (ctx.embedder and ctx.store):
+        raise ToolError("semantic search is not configured (needs an embeddings key; see [embeddings] in config)")
+    return _clip(embeddings.search(ctx.root, query, ctx.embedder, ctx.store))
+
+
 def register(reg: Registry) -> None:
+    reg.register(Tool("semantic_search", "Find the code or text most related to a query by meaning (sends file text to the embeddings provider).",
+                      _obj({"query": _S}, ["query"]), Risk.NETWORK, semantic_search, untrusted=True))
     reg.register(Tool("load_playbook", "Load a step-by-step recipe (call with no name to list them).",
                       _obj({"name": _S}, []), Risk.READ, load_playbook))
     reg.register(Tool("repo_map", "List project files with top-level function/class names.",

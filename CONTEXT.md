@@ -36,6 +36,7 @@ Personal, lightweight, permission-gated agent for building projects (code, resea
 | 7 Daemon and web UI | done | `server.py` (stdlib `http.server`, no new deps): `agentic serve` binds 127.0.0.1 only, random token (file mode 600, also in the URL hash), Host-header check against DNS rebinding, JSON API + long-poll events (not SSE), approvals via the UI's Approve/Deny buttons (10 min timeout = deny); single-file UI at `ui/index.html` (dark/light, mobile-friendly). Tested end to end with a scripted router, plus a live smoke test |
 | 8 MCP and evals | done | `mcp_server.py`: stdio MCP server (`agentic mcp --workspace .`) exposing only read-only tools (read_file, list_dir, repo_map), redacted and confined, so VS Code or Antigravity can pull project context but never write; `evals.py` + `evals/*.toml` (4 tasks: create script, fix bug, read and report, refuse to leak `.env`) with `agentic eval`; runs auto-approved in a temp workspace |
 | 9 Playbooks and deploy | done | `load_playbook` tool plus `playbooks/*.md` (deploy, new-project, college-report); `deploy` profile in `ask-all` mode that follows the deploy playbook (inspect, pre-flight, dry run, build, release, verify, rollback note); builder and general load playbooks on demand |
+| 9b Semantic search | done (unverified live) | `embeddings.py`: OpenAI-compatible `/embeddings` client (default model `nvidia/nemotron-3.5-embed-1b:free` on OpenRouter, from the user's paste) + SQLite vector index (JSON vectors, pure-Python cosine, incremental by mtime, pruned on delete). `semantic_search` tool on builder and researcher: NETWORK risk so it asks first; skips `.env`/keys/`node_modules`; caps 300 files / 1500 chunks. Embedding models cannot chat, so this is NOT in the providers list |
 | 10 Real-model validation | next (needs the user's key or Ollama) | run `agentic eval` against a real model, tune prompts and defaults, verify `openrouter/free` model name |
 
 Optional later ideas: native Anthropic provider adapter, model-based profile routing, sandboxed read confinement, SearXNG search, VS Code extension, Docker sandbox for non-macOS.
@@ -53,10 +54,11 @@ Optional later ideas: native Anthropic provider adapter, model-based profile rou
 - `src/agentic/store.py`: SQLite usage and tasks
 - `src/agentic/mcp_server.py`: read-only MCP server for editors
 - `src/agentic/evals.py`, `evals/`: eval harness and tasks
-- `tests/test_core.py`: 30 tests (`test_core.py`, `test_server.py`, `test_evals_mcp.py`) (run `.venv/bin/pytest`)
+- `tests/test_core.py`: 33 tests (`test_core.py`, `test_server.py`, `test_evals_mcp.py`, `test_embeddings.py`) (run `.venv/bin/pytest`)
 
 ## Known gaps and notes
 - The evals have only been run with scripted fake models; real pass rates are unknown until a real model is connected.
+- The embeddings endpoint and model id were taken from the user's OpenRouter snippet and are untested live (no key yet). Indexed file text is sent to that provider, hence the approval prompt; set `enabled = false` under `[embeddings]` to turn it off.
 - Not yet run against a real model (no key or Ollama yet). Everything is covered by mocked tests.
 - `openrouter/free` as the default model name is unverified; change it to a real `:free` model.
 - The sandbox restricts writes and network, not reads. Each shell command still asks for approval.
