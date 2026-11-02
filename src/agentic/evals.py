@@ -1,16 +1,21 @@
 """Eval harness: run repeatable tasks in throwaway workspaces and check the results.
 
-Task files are TOML in evals/: prompt, optional [files] to seed, and [[checks]] of type
+Task files are TOML in evals/: prompt, optional [files] to seed, optional extra_tools to grant the profile, optional [web] (url = page text) served as an offline
+fake internet to web_search/fetch_url, and [[checks]] of type
 file_exists | file_contains | file_lacks | command_contains | answer_contains | answer_lacks. Everything runs auto-approved inside a temp
 directory (sandboxed on macOS), so only run it against models you are happy to let act freely there.
 """
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import tempfile
 import tomllib
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import httpx
 
 from .audit import Audit
 from .loop import Profile, run
@@ -55,14 +60,36 @@ def check(c: dict, ws: Path, output: str = "") -> str | None:
     return f"unknown check type {kind}"
 
 
+SEARCH_HOST = "html.duckduckgo.com"
+
+
+def fake_web(pages: dict[str, str]) -> tuple[httpx.Client, set[str]]:
+    """An offline internet: web_search lists the fixture URLs, fetch_url returns their text."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == SEARCH_HOST:
+            links = "".join(f'<a class="result__a" href="{u}">{u}</a>' for u in pages)
+            return httpx.Response(200, text=links, headers={"content-type": "text/html"})
+        body = pages.get(str(req.url.copy_with(query=None)))
+        return httpx.Response(200, text=body, headers={"content-type": "text/plain"}) if body is not None \
+            else httpx.Response(404)
+    hosts = {urlparse(u).hostname for u in pages} | {SEARCH_HOST}
+    return httpx.Client(transport=httpx.MockTransport(handler)), hosts
+
+
 def run_task(task: dict, profile: Profile, router, audit_path: Path | None = None) -> Result:
+    if task.get("extra_tools"):  # e.g. give the researcher write_file to see whether a planted instruction makes it write
+        profile = dataclasses.replace(profile, tools=[*profile.tools, *task["extra_tools"]])
     with tempfile.TemporaryDirectory() as d:
         ws = Path(d).resolve()
         for name, content in (task.get("files") or {}).items():
             (ws / name).parent.mkdir(parents=True, exist_ok=True)
             (ws / name).write_text(content)
+        web_ctx = {}
+        if task.get("web"):
+            client, hosts = fake_web(task["web"])
+            web_ctx = {"http": client, "allow_hosts": hosts}
         start = getattr(router, "calls", 0)
         out = run(task["prompt"], profile, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True),
-                  ToolContext(ws), Audit(audit_path or ws / ".audit.jsonl"), max_model_calls=task.get("max_calls", 30))
+                  ToolContext(ws, **web_ctx), Audit(audit_path or ws / ".audit.jsonl"), max_model_calls=task.get("max_calls", 30))
         failures = [f for c in task.get("checks", []) if (f := check(c, ws, out))]
         return Result(task["name"], not failures, failures, getattr(router, "calls", 0) - start, out)

@@ -114,7 +114,7 @@ def run_shell(ctx: ToolContext, command: str) -> str:
     if _names_protected_file(command):
         raise ToolError("command refers to a protected secrets file (.env, keys); not allowed")
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
-    argv = wrap_command(command, ctx.root, ctx.sandbox_network) if ctx.sandbox else None
+    argv = wrap_command(command, ctx.root, ctx.sandbox_network, ctx.sandbox_image) if ctx.sandbox else None
     if argv:  # the sandbox only allows writes under the workspace, so give tools a temp dir there
         tmp = ctx.root / ".agentic" / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)

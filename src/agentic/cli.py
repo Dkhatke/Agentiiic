@@ -22,18 +22,19 @@ def _ask(summary: str) -> bool:
 
 def cmd_run(args) -> int:
     cfg = load_config()
-    profile = select_profile(args.task) if args.profile == "auto" else load_profile(args.profile)
-    print(f"profile: {profile.name}")
-    mode = Mode(args.mode or profile.mode or "ask-on-write")
     store = Store()
     router = Router(cfg.providers, store=store)
+    profile = select_profile(args.task, router=router) if args.profile == "auto" else load_profile(args.profile)
+    print(f"profile: {profile.name}")
+    mode = Mode(args.mode or profile.mode or "ask-on-write")
     task_id, messages = args.task_id, args.messages
     if task_id is None:
         task_id = store.create_task(args.task, profile.name, str(Path(args.workspace).resolve()))
     print(f"task #{task_id}  (resume later with: agentic resume {task_id})")
     ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout,
                       cfg.sandbox.enabled, cfg.sandbox.network,
-                      embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store)
+                      embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store,
+                      searxng_url=cfg.search.searxng_url, sandbox_image=cfg.sandbox.docker_image)
     profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
     try:
         out = run(args.task, profile, router, default_registry(), Gate(mode, _ask), ctx,

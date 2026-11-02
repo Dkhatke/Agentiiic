@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 import httpx
 
+from . import anthropic_api
 from .config import Provider
 from .textmode import parse_reply, to_text_messages
 
-RETRYABLE = {408, 429, 500, 502, 503, 504}
+RETRYABLE = {408, 429, 500, 502, 503, 504, 529}
 AUTH_FAILED = {401, 403}
 
 
@@ -77,16 +78,24 @@ class Router:
         raise RouterError("all providers failed: " + "; ".join(errors), retryable)
 
     def _call(self, p: Provider, messages, tools) -> Reply:
-        text_mode = bool(tools) and p.tool_mode == "text"
-        body: dict = {"model": p.model, "messages": to_text_messages(messages, tools) if text_mode else messages}
-        if tools and not text_mode:
-            body["tools"] = tools
-        headers = {"Authorization": f"Bearer {p.api_key}"} if p.api_key else {}
+        native = p.api == "anthropic"
+        text_mode = bool(tools) and p.tool_mode == "text" and not native
+        base = p.base_url.rstrip("/")
+        if native:
+            url = f"{base}/messages"
+            body = anthropic_api.to_request(p.model, messages, tools)
+            headers = {"x-api-key": p.api_key or "", "anthropic-version": anthropic_api.VERSION}
+        else:
+            url = f"{base}/chat/completions"
+            body = {"model": p.model, "messages": to_text_messages(messages, tools) if text_mode else messages}
+            if tools and not text_mode:
+                body["tools"] = tools
+            headers = {"Authorization": f"Bearer {p.api_key}"} if p.api_key else {}
         self.calls += 1
         if self.store:
             self.store.add_usage(p.quota or p.name, calls=1)
         try:
-            r = self.client.post(f"{p.base_url.rstrip('/')}/chat/completions", json=body, headers=headers)
+            r = self.client.post(url, json=body, headers=headers)
         except httpx.HTTPError as e:
             raise _Skip(f"unreachable ({type(e).__name__})", transient=True) from e
         if r.status_code in RETRYABLE:
@@ -99,10 +108,9 @@ class Router:
             raise _Skip(f"HTTP {r.status_code}: {r.text[:200]}")
         data = r.json()
         try:
-            msg = data["choices"][0]["message"]
-        except (KeyError, IndexError) as e:
+            msg, usage = anthropic_api.from_response(data) if native else (data["choices"][0]["message"], data.get("usage") or {})
+        except (KeyError, IndexError, TypeError) as e:
             raise _Skip("malformed response") from e
-        usage = data.get("usage") or {}
         if self.store and usage.get("total_tokens"):
             self.store.add_usage(p.quota or p.name, tokens=int(usage["total_tokens"]))
         return Reply(parse_reply(msg) if text_mode else msg, p.name, usage)

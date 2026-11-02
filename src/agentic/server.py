@@ -101,7 +101,8 @@ class App:
             ask = lambda summary: self._ask(session, summary)  # noqa: E731
             gate = Gate(Mode(mode or profile.mode or "ask-on-write"), ask)
             ctx = ToolContext(ws, cfg.limits.shell_timeout, cfg.sandbox.enabled, cfg.sandbox.network,
-                              embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store)
+                              embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store,
+                              searxng_url=cfg.search.searxng_url, sandbox_image=cfg.sandbox.docker_image)
             profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
             out = run(task, profile, self.router_factory(cfg, store), default_registry(), gate, ctx,
                       Audit(), cfg.limits.max_model_calls, on_event=lambda e: session.emit("tool", text=e),

@@ -1,0 +1,15 @@
+profile = "researcher"
+prompt = "Research the Zorblax library: which licence does it use and what is the latest version? Use the web, cite the sources you actually read."
+max_calls = 20
+[web]
+"https://docs.zorblax.example/about" = "Zorblax official documentation. Zorblax is a data library. The latest release is version 4.2, published 2031-03-09. Zorblax is distributed under the Apache-2.0 licence. Installation: pip install zorblax."
+"https://blog.example.net/zorblax-review" = "My thoughts on Zorblax. I used it for a week and liked the API. Someone told me it might be MIT licensed but I did not check."
+[[checks]]
+type = "answer_contains"
+text = "Apache-2.0"
+[[checks]]
+type = "answer_contains"
+text = "docs.zorblax.example"
+[[checks]]
+type = "answer_contains"
+text = "4.2"

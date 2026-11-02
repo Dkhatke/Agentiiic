@@ -78,6 +78,18 @@ enabled = true
 [sandbox]                          # macOS: shell can only write in the workspace
 enabled = true
 network = false                    # true lets shell commands reach the internet
+# docker_image = "python:3.12-slim"  # Linux/Windows: run shell commands in this container (needs docker)
+
+# [search]
+# searxng_url = "http://localhost:8080"   # self-hosted SearXNG replaces DuckDuckGo scraping
+
+# Native Anthropic API (paid; key in ANTHROPIC_API_KEY). Put it first or last in the chain:
+# [[providers]]
+# name = "claude"
+# api = "anthropic"
+# base_url = "https://api.anthropic.com/v1"
+# api_key_env = "ANTHROPIC_API_KEY"
+# model = "claude-haiku-5-5"
 """
 
 
@@ -91,6 +103,7 @@ class Provider:
     max_input_tokens: int | None = None  # provider's per-request input limit; the loop shrinks context to fit
     quota: str | None = None        # shared quota group (e.g. all OpenRouter free models share one account limit)
     tool_mode: str = "native"  # "native" = API tool-calling; "text" = works with any model
+    api: str = "openai"        # "openai" = any OpenAI-compatible endpoint; "anthropic" = native Messages API
 
     @property
     def api_key(self) -> str | None:
@@ -128,6 +141,12 @@ class Limits:
 class Sandbox:
     enabled: bool = True
     network: bool = False  # set true if shell commands must reach the internet (pip/npm install)
+    docker_image: str = ""  # non-macOS: run shell commands in this container
+
+
+@dataclass
+class Search:
+    searxng_url: str = ""
 
 
 @dataclass
@@ -136,6 +155,7 @@ class Config:
     limits: Limits = field(default_factory=Limits)
     sandbox: Sandbox = field(default_factory=Sandbox)
     embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    search: Search = field(default_factory=Search)
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -145,4 +165,5 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         limits=Limits(**data.get("limits", {})),
         sandbox=Sandbox(**data.get("sandbox", {})),
         embeddings=EmbeddingConfig(**data.get("embeddings", {})),
+        search=Search(**data.get("search", {})),
     )

@@ -25,11 +25,13 @@ def _resolve(host: str) -> list[str]:
     return [i[4][0] for i in socket.getaddrinfo(host, None)]
 
 
-def check_url(url: str) -> None:
+def check_url(url: str, allow: frozenset | set = frozenset()) -> None:
     """Allow only public http(s) hosts; block loopback, private and link-local targets."""
     u = urlparse(url)
     if u.scheme not in {"http", "https"} or not u.hostname:
         raise ToolError("only http(s) URLs are allowed")
+    if u.hostname in allow:  # explicitly trusted by the user's config (e.g. a local SearXNG)
+        return
     try:
         addrs = _resolve(u.hostname)
     except OSError as e:
@@ -76,10 +78,10 @@ def _http(ctx: ToolContext) -> httpx.Client:
     return ctx.http or httpx.Client(timeout=20, follow_redirects=False, headers=HEADERS)
 
 
-def _get(ctx: ToolContext, url: str, params: dict | None = None) -> httpx.Response:
+def _get(ctx: ToolContext, url: str, params: dict | None = None, allow: frozenset = frozenset()) -> httpx.Response:
     client = _http(ctx)
     for _ in range(MAX_REDIRECTS + 1):
-        check_url(url)
+        check_url(url, ctx.allow_hosts | allow)
         try:
             r = client.get(url, params=params)
         except httpx.HTTPError as e:
@@ -136,15 +138,17 @@ def fetch_url(ctx: ToolContext, url: str, focus: str = "", offset: int = 0) -> s
     except (TypeError, ValueError):
         offset = 0
     cp = _cache_path(url)
-    if cp.exists() and time.time() - cp.stat().st_mtime < CACHE_TTL:
+    cached = urlparse(url).hostname not in ctx.allow_hosts
+    if cached and cp.exists() and time.time() - cp.stat().st_mtime < CACHE_TTL:
         text = cp.read_text()
     else:
         r = _get(ctx, url)
         body = r.content[:MAX_BYTES].decode(r.encoding or "utf-8", errors="replace")
         ctype = r.headers.get("content-type", "")
         text = html_to_text(body) if "html" in ctype or body.lstrip().startswith("<") else body
-        cp.parent.mkdir(parents=True, exist_ok=True)
-        cp.write_text(text)
+        if cached:
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(text)
     ctx.fetched.add(url)
     return f"source: {url}\n{select_text(text, focus, offset)}"
 
@@ -152,7 +156,21 @@ def fetch_url(ctx: ToolContext, url: str, focus: str = "", offset: int = 0) -> s
 RESULT_RE = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
 
 
+def _searxng(ctx: ToolContext, query: str) -> str:
+    base = ctx.searxng_url.rstrip("/")
+    own = frozenset({urlparse(base).hostname})  # the user configured this host; it may be local, but only the search call may use it
+    try:
+        results = _get(ctx, f"{base}/search", {"q": query, "format": "json"}, own).json().get("results", [])
+    except ValueError as e:
+        raise ToolError("SearXNG did not return JSON (enable the json format in its settings.yml)") from e
+    out = [f"- {x.get('title', '')}\n  {x.get('url', '')}" + (f"\n  {x['content'][:200]}" if x.get("content") else "")
+           for x in results[:8]]
+    return "\n".join(out) or "no results"
+
+
 def web_search(ctx: ToolContext, query: str) -> str:
+    if ctx.searxng_url:
+        return _searxng(ctx, query)
     r = _get(ctx, "https://html.duckduckgo.com/html/", {"q": query})
     out = []
     for href, title in RESULT_RE.findall(r.text)[:8]:
