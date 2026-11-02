@@ -1,3 +1,4 @@
+import os
 import json
 import sys
 from pathlib import Path
@@ -298,3 +299,99 @@ def test_vscode_extension_node_tests():
     manifest = json.loads((ext / "package.json").read_text())
     ids = {c["command"] for c in manifest["contributes"]["commands"]}
     assert {"agentic.run", "agentic.securityAudit", "agentic.openUI"} <= ids
+
+
+def test_page_text_puts_the_title_first():
+    html = "<html><head><title> Zorblax &amp; Co </title></head><body><p>Body text here.</p></body></html>"
+    assert web.page_text(html).startswith("title: Zorblax & Co\n\nBody text")
+    assert web.page_text("<html><body><h1>Zorblax</h1></body></html>") == "Zorblax"  # no title: unchanged
+    dup = "<head><title>Zorblax</title></head><body><h1>Zorblax</h1><p>x</p></body>"
+    assert not web.page_text(dup).startswith("title:")  # already visible in the body: not repeated
+
+
+# --- audit hardening and doctor ---
+
+def test_audit_scrubs_secrets_everywhere_and_stays_valid_json(tmp_path):
+    from agentic.audit import Audit
+    a = Audit(tmp_path / "a.jsonl")
+    tok = "sk-" + "or-v1-" + "0123456789abcdef" * 4
+    a.record("task_start", task=f'deploy with API_KEY="{tok}" please', nested={"k": [f"Bearer {'x' * 30}"]})
+    line = (tmp_path / "a.jsonl").read_text()
+    assert "0123456789abcdef" not in line and "x" * 30 not in line
+    assert json.loads(line)["event"] == "task_start"
+
+
+def test_audit_rotates_and_keeps_a_bounded_number_of_files(tmp_path):
+    from agentic.audit import Audit, KEEP_ROTATED
+    a = Audit(tmp_path / "a.jsonl", max_bytes=300)
+    for i in range(60):
+        a.record("tick", i=i, pad="x" * 40)
+    files = sorted(p.name for p in tmp_path.iterdir())
+    assert "a.jsonl" in files and len(files) <= KEEP_ROTATED + 1
+    assert (tmp_path / "a.jsonl").stat().st_size <= 400
+    assert json.loads((tmp_path / "a.jsonl").read_text().splitlines()[-1])["i"] == 59  # newest entries are in the live file
+
+
+def test_doctor_reports_each_provider_and_counts_problems(tmp_path, monkeypatch):
+    from agentic.config import Config, Provider
+    from agentic.doctor import run_doctor
+    monkeypatch.setenv("GOOD_KEY", "k")
+    monkeypatch.setenv("BAD_KEY", "k")
+    monkeypatch.delenv("MISSING_KEY", raising=False)
+
+    def handler(req: httpx.Request):
+        if req.url.host == "good":
+            return httpx.Response(200, json={"data": []})
+        if req.url.host == "bad":
+            return httpx.Response(401)
+        raise httpx.ConnectError("refused")
+    cfg = Config(providers=[Provider("g", "http://good/v1", "m", "GOOD_KEY"), Provider("b", "http://bad/v1", "m", "BAD_KEY"),
+                            Provider("m", "http://x/v1", "m", "MISSING_KEY"), Provider("down", "http://localhost:11434/v1", "m")])
+    lines = []
+    n = run_doctor(cfg, tmp_path, httpx.Client(transport=httpx.MockTransport(handler)), out=lines.append)
+    text = "\n".join(lines)
+    assert "provider g" in text and "key accepted" in text
+    assert "key rejected (HTTP 401)" in text and "export MISSING_KEY" in text and "ollama serve" in text
+    assert n == 0  # one working provider is enough; the others are skipped, not failures
+    none = []
+    cfg.providers = cfg.providers[1:]
+    assert run_doctor(cfg, tmp_path, httpx.Client(transport=httpx.MockTransport(handler)), out=none.append) == 1
+    assert "FAIL  at least one working provider" in "\n".join(none)
+
+
+def test_doctor_cli_runs(tmp_path):
+    import subprocess, sys
+    (tmp_path / ".env").write_text("A=1")
+    env = {**os.environ, "AGENTIC_CONFIG": str(tmp_path / "c.toml"), "AGENTIC_STATE": str(tmp_path / "s"), "HOME": str(tmp_path)}
+    (tmp_path / "c.toml").write_text('[[providers]]\nname = "x"\nbase_url = "http://127.0.0.1:1/v1"\nmodel = "m"\n')
+    r = subprocess.run([sys.executable, "-m", "agentic.cli", "doctor", "--workspace", str(tmp_path)], capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and "unreachable" in r.stdout and "1 hidden from the agent" in r.stdout and "Traceback" not in r.stderr
+
+
+# --- provider reply normalisation ---
+
+def test_normalize_handles_provider_quirks():
+    from agentic.router import normalize
+    assert normalize({"content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]})["content"] == "ab"
+    assert normalize({})["content"] is None and normalize({"content": 5})["content"] is None
+    m = normalize({"content": None, "reasoning": "x", "tool_calls": [
+        {"function": {"name": "list_dir", "arguments": {"path": "."}}},           # object arguments, no id
+        {"id": "k", "function": {"name": "grep"}},                                 # no arguments
+        {"id": "z", "function": {"name": 5}}, {"id": "q"}, "junk", None]})         # unusable entries are dropped
+    assert [c["function"]["name"] for c in m["tool_calls"]] == ["list_dir", "grep"]
+    assert json.loads(m["tool_calls"][0]["function"]["arguments"]) == {"path": "."}
+    assert m["tool_calls"][1]["function"]["arguments"] == "{}" and m["tool_calls"][1]["id"] == "k"
+    assert m["tool_calls"][0]["id"]  # a missing id is filled in
+    assert "reasoning" not in m and "tool_calls" not in normalize({"tool_calls": "nope"})
+
+
+def test_router_skips_a_provider_that_answers_with_html():
+    p = Provider("a", "http://a/v1", "m")
+    ok = Provider("b", "http://b/v1", "m")
+
+    def handler(req):
+        if req.url.host == "a":
+            return httpx.Response(200, text="<html>bad gateway</html>")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "fine"}}]})
+    r = Router([p, ok], httpx.Client(transport=httpx.MockTransport(handler)))
+    assert r.chat([{"role": "user", "content": "hi"}]).provider == "b"

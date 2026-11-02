@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+from .textmode import safe_args
+
 VERSION = "2023-06-01"
 MAX_TOKENS = 4096
 
@@ -25,7 +27,7 @@ def to_request(model: str, messages: list[dict], tools: list[dict] | None) -> di
             blocks = [{"type": "text", "text": m["content"]}] if m.get("content") else []
             for c in m.get("tool_calls") or []:
                 blocks.append({"type": "tool_use", "id": c["id"], "name": c["function"]["name"],
-                               "input": json.loads(c["function"]["arguments"] or "{}")})
+                               "input": safe_args(c["function"]["arguments"])})
             out.append({"role": "assistant", "content": blocks or [{"type": "text", "text": "(no content)"}]})
         else:
             out.append({"role": "user", "content": m.get("content") or ""})

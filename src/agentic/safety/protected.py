@@ -44,4 +44,7 @@ def expands_to_protected(part: str, root: Path) -> bool:
     """True if a shell word containing glob characters would match a protected file in the workspace."""
     if not GLOB_CHARS.search(part):
         return False
-    return any(PROTECTED.search(m) for m in glob.glob(part, root_dir=root, recursive=True))
+    try:
+        return any(PROTECTED.search(m) for m in glob.glob(part, root_dir=root, recursive=True))
+    except (ValueError, OSError):  # e.g. a NUL byte: the shell could not use such a word either
+        return False

@@ -19,6 +19,15 @@ Available tools (JSON schemas):
 """
 
 
+def safe_args(raw) -> dict:
+    """Tool-call arguments as a dict; invalid or non-object JSON (a weaker model's output) becomes {}."""
+    try:
+        data = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def to_text_messages(messages: list[dict], tools: list[dict]) -> list[dict]:
     out = []
     for m in messages:
@@ -30,7 +39,7 @@ def to_text_messages(messages: list[dict], tools: list[dict]) -> list[dict]:
         elif m["role"] == "assistant" and m.get("tool_calls"):
             blocks = "\n".join(
                 '<tool_call>' + json.dumps({"name": c["function"]["name"],
-                                            "arguments": json.loads(c["function"]["arguments"] or "{}")})
+                                            "arguments": safe_args(c["function"]["arguments"])})
                 + '</tool_call>' for c in m["tool_calls"])
             out.append({"role": "assistant", "content": (m.get("content") or "") + blocks})
         else:

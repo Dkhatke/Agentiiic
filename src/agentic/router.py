@@ -1,6 +1,7 @@
 """Model router: one OpenAI-compatible client, ordered fallback chain, cooldowns."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 
@@ -12,6 +13,28 @@ from .textmode import parse_reply, to_text_messages
 
 RETRYABLE = {408, 429, 500, 502, 503, 504, 529}
 AUTH_FAILED = {401, 403}
+
+
+def normalize(msg: dict) -> dict:
+    """Make the quirks of OpenAI-compatible servers look alike: list-of-parts content, arguments sent as an object,
+    missing call ids, null or malformed tool_calls."""
+    content = msg.get("content")
+    if isinstance(content, list):
+        content = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in content)
+    out = {"role": "assistant", "content": content if isinstance(content, str) else None}
+    calls = []
+    for i, c in enumerate(msg.get("tool_calls") or [] if isinstance(msg.get("tool_calls"), list) else []):
+        fn = (c or {}).get("function") if isinstance(c, dict) else None
+        if not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
+            continue
+        args = fn.get("arguments")
+        if not isinstance(args, str):
+            args = json.dumps(args) if isinstance(args, dict) else "{}"
+        calls.append({"id": c.get("id") or f"call_{int(time.time() * 1000)}_{i}", "type": "function",
+                      "function": {"name": fn["name"], "arguments": args}})
+    if calls:
+        out["tool_calls"] = calls
+    return out
 
 
 class RouterError(Exception):
@@ -106,13 +129,19 @@ class Router:
             raise _Skip("request too large for this provider")
         if r.status_code >= 400:
             raise _Skip(f"HTTP {r.status_code}: {r.text[:200]}")
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError as e:  # an HTML error page from a proxy, an empty body...
+            raise _Skip(f"response was not JSON ({r.text[:60]!r})") from e
         try:
             msg, usage = anthropic_api.from_response(data) if native else (data["choices"][0]["message"], data.get("usage") or {})
         except (KeyError, IndexError, TypeError) as e:
             raise _Skip("malformed response") from e
         if self.store and usage.get("total_tokens"):
             self.store.add_usage(p.quota or p.name, tokens=int(usage["total_tokens"]))
+        if not isinstance(msg, dict):
+            raise _Skip("malformed response")
+        msg = normalize(msg)
         return Reply(parse_reply(msg) if text_mode else msg, p.name, usage)
 
 

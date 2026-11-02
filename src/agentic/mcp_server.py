@@ -22,7 +22,13 @@ def exposed_tools(registry):
 
 
 def handle(msg: dict, registry, ctx: ToolContext) -> dict | None:
-    method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if not isinstance(msg, dict):
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid request"}}
+    method, mid, params = msg.get("method"), msg.get("id"), msg.get("params")
+    if not isinstance(params, dict):
+        params = {}
+    if not isinstance(mid, (str, int, type(None))):
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid id"}}
     tools = exposed_tools(registry)
 
     def ok(result):
@@ -42,15 +48,18 @@ def handle(msg: dict, registry, ctx: ToolContext) -> dict | None:
         return ok({"tools": [{"name": n, "description": t.description, "inputSchema": t.parameters}
                              for n, t in tools.items()]})
     if method == "tools/call":
-        tool = tools.get(params.get("name"))
+        name = params.get("name")
+        tool = tools.get(name) if isinstance(name, str) else None
+        args = params.get("arguments")
         if not tool:
-            return err(-32602, f"unknown or non-read-only tool: {params.get('name')}")
+            return err(-32602, f"unknown or non-read-only tool: {name}")
         try:
-            text = redact(tool.func(ctx, **(params.get("arguments") or {})))
+            text = redact(tool.func(ctx, **(args if isinstance(args, dict) else {})))
             if tool.untrusted:
+                text = text.replace("untrusted_data>", "untrusted-data>")
                 text = f"<untrusted_data>\n{text}\n</untrusted_data>"
             return ok({"content": [{"type": "text", "text": text}], "isError": False})
-        except (ToolError, TypeError, OSError) as e:
+        except Exception as e:  # report any tool failure to the editor instead of dying
             return ok({"content": [{"type": "text", "text": f"error: {e}"}], "isError": True})
     return err(-32601, f"method not found: {method}")
 

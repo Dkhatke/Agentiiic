@@ -6,6 +6,7 @@ import ipaddress
 import re
 import socket
 import time
+from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
@@ -27,14 +28,18 @@ def _resolve(host: str) -> list[str]:
 
 def check_url(url: str, allow: frozenset | set = frozenset()) -> None:
     """Allow only public http(s) hosts; block loopback, private and link-local targets."""
-    u = urlparse(url)
-    if u.scheme not in {"http", "https"} or not u.hostname:
+    try:
+        u = urlparse(url)
+        host = u.hostname
+    except ValueError as e:
+        raise ToolError(f"not a valid URL: {url[:80]!r}") from e
+    if u.scheme not in {"http", "https"} or not host:
         raise ToolError("only http(s) URLs are allowed")
     if u.hostname in allow:  # explicitly trusted by the user's config (e.g. a local SearXNG)
         return
     try:
         addrs = _resolve(u.hostname)
-    except OSError as e:
+    except (OSError, UnicodeError) as e:  # UnicodeError: hostnames the IDNA codec rejects
         raise ToolError(f"cannot resolve {u.hostname}") from e
     for a in addrs:
         ip = ipaddress.ip_address(a)
@@ -68,6 +73,17 @@ def html_to_text(html: str) -> str:
     p = _Text()
     p.feed(html)
     return re.sub(r"\n\s*\n+", "\n\n", re.sub(r"[ \t]+", " ", "".join(p.parts))).strip()
+
+
+TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def page_text(html: str) -> str:
+    """Readable text with the <title> on top (the title lives in <head>, which html_to_text skips)."""
+    body = html_to_text(html)
+    m = TITLE_RE.search(html)
+    title = re.sub(r"\s+", " ", unescape(m.group(1))).strip() if m else ""
+    return f"title: {title}\n\n{body}" if title and title not in body[:300] else body
 
 
 def _cache_path(key: str):
@@ -145,7 +161,7 @@ def fetch_url(ctx: ToolContext, url: str, focus: str = "", offset: int = 0) -> s
         r = _get(ctx, url)
         body = r.content[:MAX_BYTES].decode(r.encoding or "utf-8", errors="replace")
         ctype = r.headers.get("content-type", "")
-        text = html_to_text(body) if "html" in ctype or body.lstrip().startswith("<") else body
+        text = page_text(body) if "html" in ctype or body.lstrip().startswith("<") else body
         if cached:
             cp.parent.mkdir(parents=True, exist_ok=True)
             cp.write_text(text)

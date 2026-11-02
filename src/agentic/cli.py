@@ -123,6 +123,11 @@ def cmd_models(_) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    from .doctor import run_doctor
+    return 1 if run_doctor(load_config(), Path(args.workspace).resolve()) else 0
+
+
 def cmd_providers(_) -> int:
     for p in load_config().providers:
         print(f"{'ok ' if p.usable else 'no '} {p.name:12} {p.model}  ({p.base_url})"
@@ -170,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("models", help="list free tool-calling models on OpenRouter").set_defaults(fn=cmd_models)
     sub.add_parser("providers", help="show configured providers").set_defaults(fn=cmd_providers)
     sub.add_parser("init", help="write a sample config").set_defaults(fn=cmd_init)
+    dr = sub.add_parser("doctor", help="check keys, providers, sandbox and setup")
+    dr.add_argument("--workspace", default=".")
+    dr.set_defaults(fn=cmd_doctor)
     args = ap.parse_args(argv)
     return args.fn(args)
 

@@ -229,3 +229,113 @@ def test_daemon_end_to_end(box):
     finally:
         proc.terminate()
         proc.wait(10)
+
+
+# --- a misbehaving model, over real HTTP ---
+
+def test_endless_tool_calls_stop_at_the_step_limit(box):
+    m = box.model([tc("list_dir", {"path": f"d{i}"}, cid=f"c{i}") for i in range(60)])
+    r = box.cli("run", "loop forever", "--profile", "general", "--workspace", str(box.ws))
+    assert r.returncode == 0 and "Traceback" not in r.stderr
+    assert len(m.requests) <= 31, len(m.requests)  # general has a hard step cap; never an unbounded loop
+
+
+def test_identical_repeated_calls_are_cut_off(box):
+    m = box.model([tc("list_dir", {"path": "."}, cid=f"c{i}") for i in range(8)] + [say("giving up")])
+    r = box.cli("run", "x", "--profile", "general", "--workspace", str(box.ws))
+    assert r.returncode == 0
+    tool_msgs = [x["content"] for req in m.requests[-1:] for x in req["messages"] if x["role"] == "tool"]
+    assert any("exact" in t and "times" in t for t in tool_msgs)  # the model was told it is repeating itself
+
+
+def test_model_call_budget_is_enforced(box):
+    m = box.model([tc("list_dir", {"path": f"d{i}"}, cid=f"c{i}") for i in range(30)])
+    box.config.write_text(box.config.read_text().replace("max_model_calls = 20", "max_model_calls = 3"))
+    r = box.cli("run", "x", "--profile", "general", "--workspace", str(box.ws))
+    assert r.returncode == 0 and "Traceback" not in r.stderr and "budget" in r.stdout
+    assert len(m.requests) == 3
+
+
+@pytest.mark.parametrize("reply", [
+    {"role": "assistant", "content": ""},
+    {"content": "no role field"},
+    {"role": "assistant", "content": [{"type": "text", "text": "list of parts"}]},
+    {"role": "assistant", "content": None, "tool_calls": []},
+    {"role": "assistant", "content": "x", "tool_calls": None},
+    {"role": "assistant", "content": None, "tool_calls": [{"id": "1", "type": "function", "function": {"name": "list_dir", "arguments": {"path": "."}}}]},
+    {"role": "assistant", "content": None, "tool_calls": [{"type": "function", "function": {"name": "list_dir", "arguments": "{}"}}]},
+    {"role": "assistant", "content": None, "tool_calls": [{"id": "1", "type": "function", "function": {"name": "list_dir"}}]},
+    {"role": "assistant", "content": "ok", "reasoning": "hidden", "refusal": None, "annotations": []},
+], ids=["empty", "no-role", "content-list", "empty-calls", "null-calls", "args-as-object", "no-call-id", "no-arguments", "extra-fields"])
+def test_odd_but_legal_provider_replies_are_handled(box, reply):
+    box.model([reply, say("finished")])
+    r = box.cli("run", "x", "--profile", "general", "--workspace", str(box.ws))
+    assert r.returncode == 0 and "Traceback" not in r.stderr, r.stderr[-800:]
+
+
+def test_http_failures_are_reported_cleanly(box):
+    for status in (400, 401, 403, 404, 413, 422):
+        box.model([status])
+        r = box.cli("run", "x", "--profile", "general", "--workspace", str(box.ws))
+        assert r.returncode == 1 and "error:" in r.stdout and "Traceback" not in r.stderr, status
+
+
+def test_provider_returning_html_or_garbage_json(box):
+    class Garbage(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = b"<html>502 Bad Gateway from some proxy</html>"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Garbage)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        box.config.write_text(f'[[providers]]\nname = "g"\nbase_url = "http://127.0.0.1:{httpd.server_address[1]}/v1"\nmodel = "m"\n[embeddings]\nenabled = false\n')
+        r = box.cli("run", "x", "--profile", "general", "--workspace", str(box.ws))
+        assert r.returncode == 1 and "Traceback" not in r.stderr, r.stderr[-800:]
+    finally:
+        httpd.shutdown()
+
+
+def test_daemon_handles_concurrent_tasks_without_mixing_them_up(box):
+    box.model([say(f"answer {i}") for i in range(8)])
+    port = free_port()
+    proc = subprocess.Popen([sys.executable, "-m", "agentic.cli", "serve", "--port", str(port)], env=box.env(),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, cwd=box.ws)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        for _ in range(100):
+            try:
+                if httpx.get(base + "/", timeout=1).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.1)
+        h = {"Authorization": "Bearer " + (box.state / "token").read_text()}
+        ids = []
+
+        def submit(i):
+            ids.append(httpx.post(base + "/api/tasks", headers=h, json={"task": f"say {i}", "workspace": str(box.ws), "profile": "general"}).json()["id"])
+        threads = [threading.Thread(target=submit, args=(i,)) for i in range(8)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        assert len(set(ids)) == 8  # distinct task ids, no lost inserts
+        results = {}
+        deadline = time.time() + 30
+        while len(results) < 8 and time.time() < deadline:
+            for tid in ids:
+                if tid in results:
+                    continue
+                for ev in httpx.get(f"{base}/api/tasks/{tid}/events?after=0", headers=h, timeout=30).json():
+                    if ev["type"] in {"done", "error"}:
+                        results[tid] = ev
+        assert len(results) == 8 and all(e["type"] == "done" for e in results.values()), results
+        assert len(httpx.get(base + "/api/tasks", headers=h).json()) == 8
+        assert httpx.get(base + "/api/usage", headers=h).json()[0]["calls"] == 8
+    finally:
+        proc.terminate()
+        proc.wait(10)
