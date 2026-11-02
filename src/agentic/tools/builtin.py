@@ -7,12 +7,12 @@ import re
 import shlex
 import subprocess
 
+from ..safety.protected import PROTECTED, expands_to_protected, find_protected
 from ..safety.sandbox import wrap_command
 from .registry import Registry, Risk, Tool, ToolContext, ToolError
 
 MAX_OUTPUT = 8000
 SECRET_ENV = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.I)
-PROTECTED = re.compile(r"(^|/)(\.env(\..*)?|id_rsa.*|id_ed25519.*|.*\.pem|.*\.p12|credentials(\.json)?|\.netrc)$")
 SAFE_SHELL = re.compile(r"^(ls|pwd|git status|git diff|git log)( -[\w-]+)*$")
 
 
@@ -101,20 +101,20 @@ def edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
     raise ToolError("'old' not found." + hint)
 
 
-def _names_protected_file(command: str) -> bool:
+def _names_protected_file(command: str, root=None) -> bool:
     try:
         tokens = shlex.split(command, posix=True)
     except ValueError:
         tokens = command.split()
     parts = [t for tok in tokens for t in re.split(r"[;&|<>=()]", tok) if t]
-    return any(PROTECTED.search(t) for t in parts)
+    return any(PROTECTED.search(t) or (root is not None and expands_to_protected(t, root)) for t in parts)
 
 
 def run_shell(ctx: ToolContext, command: str) -> str:
-    if _names_protected_file(command):
+    if _names_protected_file(command, ctx.root):
         raise ToolError("command refers to a protected secrets file (.env, keys); not allowed")
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
-    argv = wrap_command(command, ctx.root, ctx.sandbox_network, ctx.sandbox_image) if ctx.sandbox else None
+    argv = wrap_command(command, ctx.root, ctx.sandbox_network, ctx.sandbox_image, find_protected(ctx.root)) if ctx.sandbox else None
     if argv:  # the sandbox only allows writes under the workspace, so give tools a temp dir there
         tmp = ctx.root / ".agentic" / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
@@ -148,7 +148,8 @@ def default_registry() -> Registry:
     reg.register(Tool("run_shell", "Run a shell command in the workspace.", _obj({"command": _S}, ["command"]), Risk.DESTRUCTIVE, run_shell, _shell_risk))
     from . import dev
     dev.register(reg)
-    from . import security, web
+    from . import ideas, security, web
     web.register(reg)
+    ideas.register(reg)
     security.register(reg)
     return reg

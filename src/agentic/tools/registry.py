@@ -29,6 +29,7 @@ class ToolContext:
     embedder: object | None = None  # embeddings.Embedder, set when configured
     store: object | None = None
     fetched: set = field(default_factory=set)  # URLs actually read this run (for citation checks)
+    judge: object | None = None  # callable(prompt) -> str backed by a separate model (judge_ideas)
     searxng_url: str = ""  # self-hosted SearXNG instance; replaces DuckDuckGo scraping when set
     sandbox_image: str = ""  # docker image for the shell sandbox on non-macOS hosts
     allow_hosts: set = field(default_factory=set)  # hosts exempt from the SSRF check and the page cache (SearXNG, offline evals)

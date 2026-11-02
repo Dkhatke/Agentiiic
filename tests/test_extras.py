@@ -178,3 +178,123 @@ def test_config_parses_new_options(tmp_path):
     cfg = load_config(p)
     assert cfg.providers[0].api == "anthropic" and cfg.sandbox.docker_image == "img"
     assert cfg.search.searxng_url == "http://localhost:8080"
+
+
+# --- wildcard-proof protected files ---
+
+def test_glob_obfuscation_is_caught_by_the_command_check(tmp_path):
+    from agentic.tools.builtin import _names_protected_file
+    (tmp_path / ".env").write_text("K=1")
+    (tmp_path / "keys").mkdir()
+    (tmp_path / "keys" / "server.pem").write_text("x")
+    root = tmp_path.resolve()
+    for cmd in ["cat .e*", "cat .en?", "cat .en[v]", "cat keys/*.pem", "cat **/server.pe?"]:
+        assert _names_protected_file(cmd, root), cmd
+    assert not _names_protected_file("cat READ*", root) and not _names_protected_file("ls *.py", root)
+
+
+def test_find_protected_skips_vendor_dirs(tmp_path):
+    from agentic.safety.protected import find_protected
+    (tmp_path / ".env").write_text("a")
+    (tmp_path / "node_modules" / "p").mkdir(parents=True)
+    (tmp_path / "node_modules" / "p" / "x.pem").write_text("a")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "id_rsa").write_text("a")
+    assert sorted(p.name for p in find_protected(tmp_path)) == [".env", "id_rsa"]
+
+
+def test_docker_shadows_secret_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "docker_available", lambda: True)
+    argv = sandbox.wrap_command("ls", tmp_path, image="img", hidden_files=[tmp_path / "sub" / ".env"])
+    assert "/dev/null:/work/sub/.env:ro" in argv
+
+
+def test_sandbox_profile_hides_workspace_secrets(tmp_path):
+    prof = sandbox.profile(tmp_path, False, hidden_files=[tmp_path / 'we"ird' / ".env"])
+    assert '(literal "' + str(tmp_path) + '/we\\"ird/.env")' in prof
+
+
+@pytest.mark.skipif(not sandbox.available(), reason="macOS sandbox-exec only")
+def test_sandbox_blocks_obfuscated_env_read(tmp_path):
+    import subprocess
+    from agentic.safety.protected import find_protected
+    root = tmp_path.resolve()
+    (root / ".env").write_text("TOPSECRET")
+    (root / "README").write_text("fine")
+    hidden = find_protected(root)
+    for cmd in ["cat .e*", "cat $(printf '.e%s' nv)", "ln -s .env x && cat x"]:
+        r = subprocess.run(sandbox.wrap_command(cmd, root, hidden_files=hidden), capture_output=True, text=True, cwd=root)
+        assert "TOPSECRET" not in r.stdout and r.returncode != 0, cmd
+    ok = subprocess.run(sandbox.wrap_command("cat README", root, hidden_files=hidden), capture_output=True, text=True, cwd=root)
+    assert ok.stdout == "fine"
+
+
+# --- judge_ideas ---
+
+IDEAS = "Notes bot: summarises lectures\nPlant monitor: sensors on a Pi\nQuiz maker: flashcards from PDFs"
+
+
+def test_judge_ideas_scores_sorted_and_drops(tmp_path):
+    from agentic.tools.ideas import judge_ideas
+    reply = json.dumps([{"n": 1, "feasibility": 5, "usefulness": 4, "learning": 3, "reason": "easy"},
+                        {"n": 2, "feasibility": 2, "usefulness": 3, "learning": 5, "reason": "needs hardware"},
+                        {"n": 3, "feasibility": 4, "usefulness": 5, "learning": 4, "reason": "weekly use"}])
+    seen = []
+    c = ToolContext(tmp_path.resolve(), judge=lambda prompt: seen.append(prompt) or "Sure:\n" + reply)
+    (tmp_path / "AGENTS.md").write_text("Owner has no GPU")
+    out = judge_ideas(c, IDEAS)
+    lines = out.splitlines()[1:]
+    assert lines[0].startswith("3.") and lines[-1].startswith("2.") and "DROP" in lines[-1] and "KEEP" in lines[0]
+    assert "no GPU" in seen[0] and "Plant monitor" in seen[0]
+
+
+def test_judge_ideas_errors_and_bad_replies(tmp_path):
+    from agentic.tools.ideas import judge_ideas, parse_scores
+    with pytest.raises(ToolError, match="no judge"):
+        judge_ideas(ToolContext(tmp_path.resolve()), IDEAS)
+    with pytest.raises(ToolError, match="one idea per line"):
+        judge_ideas(ToolContext(tmp_path.resolve(), judge=lambda p: ""), "just one")
+    assert "could not be parsed" in judge_ideas(ToolContext(tmp_path.resolve(), judge=lambda p: "meh"), IDEAS)
+    assert parse_scores('[{"n": 9, "feasibility": 3, "usefulness": 3, "learning": 3}]', 3) is None  # n out of range
+    s = parse_scores('[{"n": 1, "feasibility": 9, "usefulness": 0, "learning": 3}]', 3)
+    assert s[0]["feasibility"] == 5 and s[0]["usefulness"] == 1  # clamped to the scale
+
+
+def test_judge_uses_a_different_provider_first():
+    from agentic.config import Config, Judge
+    from agentic.judge import make_judge
+    urls = []
+
+    def handler(req: httpx.Request):
+        urls.append(req.url.host)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Config(providers=[Provider("a", "http://a/v1", "m"), Provider("b", "http://b/v1", "m"), Provider("c", "http://c/v1", "m")])
+    assert make_judge(cfg, client=client)("score") == "ok" and urls == ["b"]
+    cfg.judge = Judge(provider="c")
+    urls.clear()
+    make_judge(cfg, client=client)("score")
+    assert urls == ["c"]
+
+
+def test_ideator_has_the_judge_tool_and_it_works_end_to_end(tmp_path):
+    prof = load_profile("ideator")
+    assert "judge_ideas" in prof.tools
+    scores = json.dumps([{"n": i, "feasibility": 4, "usefulness": 4, "learning": 4, "reason": "ok"} for i in (1, 2, 3)])
+    t = next(x for x in load_tasks(EVALS) if x["name"] == "ideas-judged")
+    router = Scripted([tc("judge_ideas", {"ideas": IDEAS}), {"content": "Recommend Quiz maker. First milestone: PDF to text."}])
+    r = run_task(t, prof, router, judge=lambda p: scores)
+    assert r.passed, r.failures
+
+
+# --- VS Code launcher (node tests, skipped when node is missing) ---
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None, reason="node not installed")
+def test_vscode_extension_node_tests():
+    import subprocess
+    ext = Path(__file__).parent.parent / "vscode-extension"
+    r = subprocess.run(["node", "--test", "test/"], cwd=ext, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-800:] + r.stderr[-400:]
+    manifest = json.loads((ext / "package.json").read_text())
+    ids = {c["command"] for c in manifest["contributes"]["commands"]}
+    assert {"agentic.run", "agentic.securityAudit", "agentic.openUI"} <= ids

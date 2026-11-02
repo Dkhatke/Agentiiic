@@ -1,0 +1,37 @@
+{
+  "name": "agentic-launcher",
+  "displayName": "Agentic Launcher",
+  "description": "Run your local Agentic agent from VS Code or Antigravity. A thin launcher: tasks run in the integrated terminal, where the agent asks before it acts.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "agentic.run", "title": "Agentic: Run Task" },
+      { "command": "agentic.runOnSelection", "title": "Agentic: Run Task About Selection" },
+      { "command": "agentic.securityAudit", "title": "Agentic: Security Audit This Workspace" },
+      { "command": "agentic.research", "title": "Agentic: Research a Question" },
+      { "command": "agentic.openUI", "title": "Agentic: Open Web UI" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "agentic.runOnSelection", "when": "editorHasSelection", "group": "navigation@99" }
+      ]
+    },
+    "configuration": {
+      "title": "Agentic",
+      "properties": {
+        "agentic.command": {
+          "type": "string",
+          "default": "agentic",
+          "description": "How to start the CLI. Use an absolute path if it is not on PATH, e.g. /Users/me/Agentic Project/.venv/bin/agentic"
+        },
+        "agentic.port": { "type": "number", "default": 8765, "description": "Port for the web UI (agentic serve)." }
+      }
+    }
+  }
+}

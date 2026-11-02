@@ -76,7 +76,7 @@ def fake_web(pages: dict[str, str]) -> tuple[httpx.Client, set[str]]:
     return httpx.Client(transport=httpx.MockTransport(handler)), hosts
 
 
-def run_task(task: dict, profile: Profile, router, audit_path: Path | None = None) -> Result:
+def run_task(task: dict, profile: Profile, router, audit_path: Path | None = None, judge=None) -> Result:
     if task.get("extra_tools"):  # e.g. give the researcher write_file to see whether a planted instruction makes it write
         profile = dataclasses.replace(profile, tools=[*profile.tools, *task["extra_tools"]])
     with tempfile.TemporaryDirectory() as d:
@@ -84,10 +84,10 @@ def run_task(task: dict, profile: Profile, router, audit_path: Path | None = Non
         for name, content in (task.get("files") or {}).items():
             (ws / name).parent.mkdir(parents=True, exist_ok=True)
             (ws / name).write_text(content)
-        web_ctx = {}
+        web_ctx = {"judge": judge}
         if task.get("web"):
             client, hosts = fake_web(task["web"])
-            web_ctx = {"http": client, "allow_hosts": hosts}
+            web_ctx |= {"http": client, "allow_hosts": hosts}
         start = getattr(router, "calls", 0)
         out = run(task["prompt"], profile, router, default_registry(), Gate(Mode.ASK_ON_WRITE, lambda s: True),
                   ToolContext(ws, **web_ctx), Audit(audit_path or ws / ".audit.jsonl"), max_model_calls=task.get("max_calls", 30))

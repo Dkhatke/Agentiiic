@@ -11,6 +11,7 @@ from .permissions import Gate, Mode
 from .orchestrator import select_profile
 from .profiles import all_profiles, load_profile
 from .embeddings import Embedder
+from .judge import make_judge
 from .router import Router, RouterError
 from .store import Store
 from .tools import ToolContext, default_registry
@@ -34,7 +35,8 @@ def cmd_run(args) -> int:
     ctx = ToolContext(Path(args.workspace).resolve(), cfg.limits.shell_timeout,
                       cfg.sandbox.enabled, cfg.sandbox.network,
                       embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None, store=store,
-                      searxng_url=cfg.search.searxng_url, sandbox_image=cfg.sandbox.docker_image)
+                      searxng_url=cfg.search.searxng_url, sandbox_image=cfg.sandbox.docker_image,
+                      judge=make_judge(cfg, store))
     profile.max_steps = min(profile.max_steps, cfg.limits.max_steps)
     try:
         out = run(args.task, profile, router, default_registry(), Gate(mode, _ask), ctx,
@@ -81,14 +83,15 @@ def cmd_serve(args) -> int:
 def cmd_eval(args) -> int:
     from .evals import load_tasks, run_task
     cfg = load_config()
-    router = Router(cfg.providers, store=Store())
+    store = Store()
+    router, judge = Router(cfg.providers, store=store), make_judge(cfg, store)
     tasks = load_tasks(Path(args.dir))
     if args.only:
         tasks = [t for t in tasks if t["name"] in args.only]
     passed = 0
     for t in tasks:
         try:
-            r = run_task(t, load_profile(t.get("profile", args.profile)), router)
+            r = run_task(t, load_profile(t.get("profile", args.profile)), router, judge=judge)
         except RouterError as e:
             print(f"ERR   {t['name']}: {e}")
             continue

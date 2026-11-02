@@ -21,7 +21,11 @@ def docker_available() -> bool:
     return shutil.which("docker") is not None
 
 
-def profile(root: Path, network: bool, home: Path | None = None) -> str:
+def _q(path) -> str:
+    return str(path).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def profile(root: Path, network: bool, home: Path | None = None, hidden_files: list[Path] = ()) -> str:
     home = home or Path.home()
     lines = ["(version 1)", "(allow default)"]
     if not network:
@@ -29,24 +33,28 @@ def profile(root: Path, network: bool, home: Path | None = None) -> str:
     writable = " ".join(f'(subpath "{p}")' for p in (root, "/dev"))  # temp lives inside root via TMPDIR
     lines.append(f"(deny file-write* (require-not (require-any {writable})))")
     hidden = [f'(subpath "{home / d}")' for d in SECRET_DIRS] + [f'(literal "{home / f}")' for f in SECRET_FILES]
+    hidden += [f'(literal "{_q(f)}")' for f in hidden_files]  # .env files etc. inside the workspace
     lines.append(f"(deny file-read* {' '.join(hidden)})")
     return "\n".join(lines)
 
 
-def docker_argv(command: str, root: Path, network: bool, image: str) -> list[str]:
+def docker_argv(command: str, root: Path, network: bool, image: str, hidden_files: list[Path] = ()) -> list[str]:
     argv = ["docker", "run", "--rm", "-v", f"{root}:/work", "-w", "/work",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges"]
     if hasattr(os, "getuid"):
         argv += ["--user", f"{os.getuid()}:{os.getgid()}"]  # files created inside belong to you, not root
+    for f in hidden_files:  # an empty read-only file shadows each secret file inside the container
+        argv += ["-v", f"/dev/null:/work/{f.relative_to(root)}:ro"]
     if not network:
         argv += ["--network", "none"]
     return argv + [image, "/bin/sh", "-c", command]
 
 
-def wrap_command(command: str, root: Path, network: bool = False, image: str = "") -> list[str] | None:
+def wrap_command(command: str, root: Path, network: bool = False, image: str = "",
+                 hidden_files: list[Path] = ()) -> list[str] | None:
     """Return argv that runs `command` sandboxed, or None if sandboxing is unavailable."""
     if image and docker_available():
-        return docker_argv(command, root, network, image)
+        return docker_argv(command, root, network, image, hidden_files)
     if not available():
         return None
-    return ["sandbox-exec", "-p", profile(root, network), "/bin/sh", "-c", command]
+    return ["sandbox-exec", "-p", profile(root, network, hidden_files=hidden_files), "/bin/sh", "-c", command]

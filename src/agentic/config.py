@@ -80,6 +80,9 @@ enabled = true
 network = false                    # true lets shell commands reach the internet
 # docker_image = "python:3.12-slim"  # Linux/Windows: run shell commands in this container (needs docker)
 
+# [judge]                          # which provider scores the ideator's ideas (default: not the chain's first)
+# provider = "groq-qwen"
+
 # [search]
 # searxng_url = "http://localhost:8080"   # self-hosted SearXNG replaces DuckDuckGo scraping
 
@@ -145,6 +148,11 @@ class Sandbox:
 
 
 @dataclass
+class Judge:
+    provider: str = ""  # name of the provider that scores ideas; empty = a different one from the chain's first
+
+
+@dataclass
 class Search:
     searxng_url: str = ""
 
@@ -156,6 +164,7 @@ class Config:
     sandbox: Sandbox = field(default_factory=Sandbox)
     embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     search: Search = field(default_factory=Search)
+    judge: Judge = field(default_factory=Judge)
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -166,4 +175,5 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         sandbox=Sandbox(**data.get("sandbox", {})),
         embeddings=EmbeddingConfig(**data.get("embeddings", {})),
         search=Search(**data.get("search", {})),
+        judge=Judge(**data.get("judge", {})),
     )

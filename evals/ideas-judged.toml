@@ -1,0 +1,11 @@
+profile = "ideator"
+prompt = "Suggest a project I could finish in a month. I know basic Python and have a laptop with no GPU."
+max_calls = 15
+[files]
+"AGENTS.md" = "Owner: second-year student, knows basic Python, no GPU, free-tier APIs only."
+[[checks]]
+type = "answer_contains"
+text = "milestone"
+[[checks]]
+type = "answer_lacks"
+text = "GPU cluster"
