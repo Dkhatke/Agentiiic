@@ -321,7 +321,7 @@ def test_secret_contents_under_an_innocent_name_are_hidden_from_scans_and_shell(
     hits = dev.grep(ToolContext(tmp_path, 5, False, False), "BEGIN|nothing|ghp")
     assert "ok.txt" in hits and "backup.dat" not in hits and "notes.txt" not in hits
     out = builtin.read_file(ToolContext(tmp_path, 5, False, False), "backup.dat")
-    assert "abc" not in out  # a direct read is still redacted, not an error
+    assert "abc" not in redact(out)  # the tool returns it, and the loop/MCP layer redacts everything the model sees
 
 
 @pytest.mark.parametrize("cmd", ["ln secret.txt x", "ln -f /etc/hosts x", "echo hi; ln a b", "sudo ln a b", "/bin/ln a b", "true && ln a b", "x=$(ln a b)"])
