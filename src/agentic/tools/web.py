@@ -41,10 +41,46 @@ def check_url(url: str, allow: frozenset | set = frozenset()) -> None:
         addrs = _resolve(u.hostname)
     except (OSError, UnicodeError) as e:  # UnicodeError: hostnames the IDNA codec rejects
         raise ToolError(f"cannot resolve {u.hostname}") from e
+    _require_public(u.hostname, addrs)
+
+
+def _require_public(host: str, addrs: list[str]) -> None:
     for a in addrs:
         ip = ipaddress.ip_address(a)
         if not ip.is_global or ip.is_multicast:  # also covers 100.64/10 (carrier NAT) and other special-use ranges
-            raise ToolError(f"blocked non-public address for {u.hostname}")
+            raise ToolError(f"blocked non-public address for {host}")
+
+
+class PinnedTransport(httpx.BaseTransport):
+    """Closes the DNS-rebinding gap: the hostname is resolved once, every address is checked, and the connection goes to that
+    exact address (Host header and TLS name stay the original host). A second, different DNS answer is never consulted."""
+
+    def __init__(self, inner: httpx.BaseTransport | None = None, allow: frozenset | set = frozenset()):
+        self.inner, self.allow = inner or httpx.HTTPTransport(), allow
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host not in self.allow:
+            try:
+                addrs = [host] if _is_ip(host) else _resolve(host)
+            except (OSError, UnicodeError) as e:
+                raise ToolError(f"cannot resolve {host}") from e
+            _require_public(host, addrs)
+            if not _is_ip(host):
+                request.extensions = {**request.extensions, "sni_hostname": host}  # certificate is still checked against the hostname
+                request.url = request.url.copy_with(host=addrs[0])
+        return self.inner.handle_request(request)
+
+    def close(self) -> None:
+        self.inner.close()
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 
 class _Text(HTMLParser):
@@ -90,12 +126,13 @@ def _cache_path(key: str):
     return STATE_DIR / "cache" / (hashlib.sha256(key.encode()).hexdigest() + ".txt")
 
 
-def _http(ctx: ToolContext) -> httpx.Client:
-    return ctx.http or httpx.Client(timeout=20, follow_redirects=False, headers=HEADERS)
+def _http(ctx: ToolContext, allow: frozenset = frozenset()) -> httpx.Client:
+    return ctx.http or httpx.Client(timeout=20, follow_redirects=False, headers=HEADERS,
+                                    transport=PinnedTransport(allow=ctx.allow_hosts | allow))
 
 
 def _get(ctx: ToolContext, url: str, params: dict | None = None, allow: frozenset = frozenset()) -> httpx.Response:
-    client = _http(ctx)
+    client = _http(ctx, allow)
     for _ in range(MAX_REDIRECTS + 1):
         check_url(url, ctx.allow_hosts | allow)
         try:

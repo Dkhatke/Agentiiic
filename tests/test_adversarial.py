@@ -246,3 +246,40 @@ def test_audit_log_has_no_secrets(tmp_path):
     ws = mk(tmp_path)
     call("write_file", {"path": "cfg.txt", "content": "API_KEY=" + TOKENS["openrouter"]}, ToolContext(ws), tmp_path)
     assert HEX[:20] not in (tmp_path / "a.jsonl").read_text()
+
+
+# --- DNS rebinding: the address that was checked is the address that is used ---
+
+def test_pinned_transport_survives_a_rebinding_dns_server(monkeypatch):
+    answers = iter([["93.184.216.34"], ["127.0.0.1"], ["127.0.0.1"]])  # public for the check, loopback afterwards
+    monkeypatch.setattr(web, "_resolve", lambda h: next(answers))
+    seen = []
+
+    class Inner(httpx.BaseTransport):
+        def handle_request(self, request):
+            seen.append((request.url.host, request.headers["host"], request.extensions.get("sni_hostname")))
+            return httpx.Response(200, text="ok")
+    r = httpx.Client(transport=web.PinnedTransport(Inner())).get("https://rebind.example/page")
+    assert r.text == "ok"
+    assert seen == [("93.184.216.34", "rebind.example", "rebind.example")]  # connected to the checked IP, never to 127.0.0.1
+
+
+def test_pinned_transport_blocks_private_answers_and_ip_literals(monkeypatch):
+    monkeypatch.setattr(web, "_resolve", lambda h: ["10.0.0.5"])
+    t = web.PinnedTransport(httpx.MockTransport(lambda r: httpx.Response(200)))
+    for url in ["http://internal.example/", "http://127.0.0.1/", "http://[::1]/", "http://169.254.169.254/"]:
+        with pytest.raises(ToolError):
+            httpx.Client(transport=t).get(url)
+
+
+def test_pinned_transport_allow_list_and_dns_failure(monkeypatch):
+    monkeypatch.setattr(web, "_resolve", lambda h: (_ for _ in ()).throw(OSError("nxdomain")))
+    ok = web.PinnedTransport(httpx.MockTransport(lambda r: httpx.Response(200, text="local")), allow={"localhost"})
+    assert httpx.Client(transport=ok).get("http://localhost:8080/search").text == "local"
+    with pytest.raises(ToolError, match="cannot resolve"):
+        httpx.Client(transport=web.PinnedTransport(httpx.MockTransport(lambda r: httpx.Response(200)))).get("http://nowhere.example/")
+
+
+def test_default_client_uses_the_pinned_transport(tmp_path):
+    c = web._http(ToolContext(tmp_path))
+    assert isinstance(c._transport, web.PinnedTransport)
