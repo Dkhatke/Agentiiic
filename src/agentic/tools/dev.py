@@ -5,10 +5,10 @@ import re
 import subprocess
 from pathlib import Path
 
-from .builtin import PROTECTED, _S, _clip, _obj
+from ..safety.protected import PROTECTED, SKIP_DIRS, walk_files
+from .builtin import _S, _clip, _obj
 from .registry import Registry, Risk, Tool, ToolContext, ToolError
 
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".pytest_cache"}
 SYMBOLS = {
     ".py": re.compile(r"^\s*(?:async\s+)?(?:def|class)\s+\w+"),
     ".js": re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const\s+\w+\s*=\s*\()\s*\w*"),
@@ -27,11 +27,7 @@ def repo_map(ctx: ToolContext, path: str = ".") -> str:
     """Files ranked by how much other code references their definitions (aider-style, regex not tree-sitter)."""
     base = ctx.resolve(path)
     files, count = [], 0
-    for f in sorted(base.rglob("*")):
-        if any(part in SKIP_DIRS for part in f.relative_to(ctx.root).parts) or not f.is_file():
-            continue
-        if PROTECTED.search(str(f)):
-            continue
+    for f in walk_files(ctx.root, base):
         count += 1
         if count > MAX_FILES:
             break
@@ -70,10 +66,8 @@ def grep(ctx: ToolContext, pattern: str, path: str = ".") -> str:
         raise ToolError(f"bad regex: {e}") from e
     base = ctx.resolve(path)
     hits = []
-    for f in sorted(base.rglob("*") if base.is_dir() else [base]):
-        if not f.is_file() or any(p in SKIP_DIRS for p in f.relative_to(ctx.root).parts):
-            continue
-        if PROTECTED.search(str(f)) or f.stat().st_size > 500_000:
+    for f in (walk_files(ctx.root, base) if base.is_dir() else [base]):  # a single file was already resolved by ctx.resolve
+        if not f.is_file() or PROTECTED.search(str(f)) or f.stat().st_size > 500_000:
             continue
         try:
             lines = f.read_text().splitlines()
@@ -88,7 +82,10 @@ def grep(ctx: ToolContext, pattern: str, path: str = ".") -> str:
 
 
 def _git(ctx: ToolContext, *args: str) -> str:
-    r = subprocess.run(["git", *args], cwd=ctx.root, capture_output=True, text=True, timeout=ctx.shell_timeout)
+    try:
+        r = subprocess.run(["git", *args], cwd=ctx.root, capture_output=True, text=True, timeout=ctx.shell_timeout)
+    except subprocess.TimeoutExpired:
+        raise ToolError(f"git {args[0]} timed out after {ctx.shell_timeout}s") from None
     if r.returncode != 0:
         raise ToolError(r.stderr.strip() or f"git {args[0]} failed")
     return r.stdout.strip()
@@ -99,7 +96,12 @@ def git_commit(ctx: ToolContext, message: str) -> str:
     if branch in PROTECTED_BRANCHES and not ctx.allow_main_commit:
         raise ToolError(f"refusing to commit on '{branch}'; create a feature branch first (git_branch tool)")
     _git(ctx, "add", "-A")
-    return _git(ctx, "commit", "-m", message)
+    staged = _git(ctx, "diff", "--cached", "--name-only").splitlines()
+    secrets = [f for f in staged if PROTECTED.search(f)]
+    if secrets:  # never let a blanket `git add -A` publish .env files or keys
+        _git(ctx, "reset", "-q", "--", *secrets)
+    out = _git(ctx, "commit", "-m", message)
+    return out + (f"\nleft out secret files (add them to .gitignore): {', '.join(secrets)}" if secrets else "")
 
 
 def git_branch(ctx: ToolContext, name: str) -> str:

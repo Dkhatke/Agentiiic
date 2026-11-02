@@ -128,7 +128,8 @@ def run_shell(ctx: ToolContext, command: str) -> str:
 
 
 def _shell_risk(args: dict) -> Risk:
-    return Risk.READ if SAFE_SHELL.match(args.get("command", "").strip()) else Risk.DESTRUCTIVE
+    cmd = args.get("command")
+    return Risk.READ if isinstance(cmd, str) and SAFE_SHELL.match(cmd.strip()) else Risk.DESTRUCTIVE
 
 
 def _obj(props: dict, required: list[str]) -> dict:

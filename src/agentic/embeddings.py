@@ -12,7 +12,7 @@ import httpx
 
 from .config import EmbeddingConfig
 from .tools.builtin import PROTECTED
-from .tools.dev import SKIP_DIRS
+from .safety.protected import walk_files
 from .tools.registry import ToolError
 
 SUFFIXES = {".py", ".js", ".ts", ".tsx", ".md", ".txt", ".toml", ".json", ".html", ".css", ".java", ".go", ".rs"}
@@ -54,9 +54,7 @@ def _chunks(path: Path) -> list[tuple[int, str]]:
 
 def index_workspace(root: Path, embedder: Embedder, store) -> int:
     """Embed new or changed files; returns number of chunks embedded this run."""
-    files = [f for f in sorted(root.rglob("*"))
-             if f.is_file() and f.suffix in SUFFIXES and f.stat().st_size < MAX_FILE_BYTES
-             and not any(p in SKIP_DIRS for p in f.relative_to(root).parts) and not PROTECTED.search(str(f))][:MAX_FILES]
+    files = [f for f in walk_files(root) if f.suffix in SUFFIXES and f.stat().st_size < MAX_FILE_BYTES][:MAX_FILES]
     store.prune_chunks(str(root), {str(f.relative_to(root)) for f in files})
     embedded, budget = 0, MAX_CHUNKS
     for f in files:

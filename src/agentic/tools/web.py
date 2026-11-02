@@ -38,7 +38,7 @@ def check_url(url: str, allow: frozenset | set = frozenset()) -> None:
         raise ToolError(f"cannot resolve {u.hostname}") from e
     for a in addrs:
         ip = ipaddress.ip_address(a)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        if not ip.is_global or ip.is_multicast:  # also covers 100.64/10 (carrier NAT) and other special-use ranges
             raise ToolError(f"blocked non-public address for {u.hostname}")
 
 

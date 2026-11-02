@@ -7,7 +7,7 @@ import subprocess
 
 from ..safety.redact import ASSIGNMENT, PATTERNS
 from .builtin import PROTECTED, _S, _clip, _obj
-from .dev import SKIP_DIRS
+from ..safety.protected import walk_files
 from .registry import Registry, Risk, Tool, ToolContext
 
 MAX_HITS = 80
@@ -31,10 +31,8 @@ CODE_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rb", ".p
 
 
 def _files(ctx: ToolContext, include_protected: bool):
-    for f in sorted(ctx.root.rglob("*")):
-        if not f.is_file() or any(p in SKIP_DIRS for p in f.relative_to(ctx.root).parts) or f.stat().st_size > 500_000:
-            continue
-        if include_protected or not PROTECTED.search(str(f)):
+    for f in walk_files(ctx.root, include_protected=include_protected):
+        if f.stat().st_size <= 500_000:
             yield f
 
 

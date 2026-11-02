@@ -9,10 +9,23 @@ import os
 import re
 from pathlib import Path
 
-PROTECTED = re.compile(r"(^|/)(\.env(\..*)?|id_rsa.*|id_ed25519.*|.*\.pem|.*\.p12|credentials(\.json)?|\.netrc)$")
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".agentic", ".tox", "dist", "build"}
+PROTECTED = re.compile(
+    r"(^|/)(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519).*|.*\.(pem|p12|pfx|key|jks|keystore)|credentials(\.json)?|\.netrc|\.npmrc|"
+    r"\.pypirc|\.git-credentials|\.pgpass|\.htpasswd|service[-_]?account.*\.json)$", re.I)  # re.I: macOS volumes ignore case
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".agentic", ".tox", "dist", "build", ".pytest_cache"}
 MAX_FILES = 200
 GLOB_CHARS = re.compile(r"[*?\[]")
+
+
+def walk_files(root: Path, base: Path | None = None, include_protected: bool = False):
+    """Regular files under `base`, sorted. Skips vendor dirs, secret files (unless asked) and every symlink, so a link
+    inside the workspace can never lead a tool to a file outside it."""
+    for dirpath, dirs, files in os.walk(base or root, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not Path(dirpath, d).is_symlink())
+        for name in sorted(files):
+            f = Path(dirpath, name)
+            if not f.is_symlink() and (include_protected or not PROTECTED.search(name)):
+                yield f
 
 
 def find_protected(root: Path) -> list[Path]:

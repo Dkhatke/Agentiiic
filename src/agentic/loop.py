@@ -175,6 +175,8 @@ def _execute(call, profile, registry, gate, ctx, audit, on_event, seen: Counter)
                 "Change your approach, or finish and explain what is blocking you.")
     try:
         args = json.loads(call["function"].get("arguments") or "{}")
+        if not isinstance(args, dict):
+            raise ToolError(f"arguments for {name} must be a JSON object like {{\"path\": \"a.txt\"}}, got {type(args).__name__}")
         if name not in profile.tools:
             raise ToolError(f"tool not allowed for this profile: {name}. Available: {', '.join(profile.tools)}")
         tool = registry.get(name)
@@ -196,7 +198,11 @@ def _execute(call, profile, registry, gate, ctx, audit, on_event, seen: Counter)
     except (ToolError, OSError) as e:
         audit.record("tool_error", tool=name, error=str(e))
         return f"error: {e}"
+    except Exception as e:  # a tool bug or odd input must never take the whole run down
+        audit.record("tool_error", tool=name, error=f"{type(e).__name__}: {e}")
+        return f"error: {name} failed ({type(e).__name__}: {e}). Check the arguments and try a different approach."
     if tool.untrusted:
         gate.tainted = True
+        out = out.replace("untrusted_data>", "untrusted-data>")  # content cannot close or fake the wrapper
         out = f"<untrusted_data>\n{out}\n</untrusted_data>"
     return out
