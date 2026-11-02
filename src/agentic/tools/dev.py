@@ -5,7 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from ..safety.protected import PROTECTED, SKIP_DIRS, walk_files
+from ..safety.protected import PROTECTED, SKIP_DIRS, secret_reason, walk_files
 from .builtin import _S, _clip, _obj
 from .registry import Registry, Risk, Tool, ToolContext, ToolError
 
@@ -67,7 +67,7 @@ def grep(ctx: ToolContext, pattern: str, path: str = ".") -> str:
     base = ctx.resolve(path)
     hits = []
     for f in (walk_files(ctx.root, base) if base.is_dir() else [base]):  # a single file was already resolved by ctx.resolve
-        if not f.is_file() or PROTECTED.search(str(f)) or f.stat().st_size > 500_000:
+        if not f.is_file() or secret_reason(f) or f.stat().st_size > 500_000:
             continue
         try:
             lines = f.read_text().splitlines()
@@ -97,7 +97,7 @@ def git_commit(ctx: ToolContext, message: str) -> str:
         raise ToolError(f"refusing to commit on '{branch}'; create a feature branch first (git_branch tool)")
     _git(ctx, "add", "-A")
     staged = _git(ctx, "diff", "--cached", "--name-only").splitlines()
-    secrets = [f for f in staged if PROTECTED.search(f)]
+    secrets = [f for f in staged if secret_reason(ctx.root / f)]
     if secrets:  # never let a blanket `git add -A` publish .env files or keys
         _git(ctx, "reset", "-q", "--", *secrets)
     out = _git(ctx, "commit", "-m", message)

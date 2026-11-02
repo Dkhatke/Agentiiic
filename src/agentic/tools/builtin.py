@@ -7,7 +7,7 @@ import re
 import shlex
 import subprocess
 
-from ..safety.protected import PROTECTED, expands_to_protected, find_protected
+from ..safety.protected import PROTECTED, expands_to_protected, find_protected, secret_reason
 from ..safety.sandbox import wrap_command
 from .registry import Registry, Risk, Tool, ToolContext, ToolError
 
@@ -27,8 +27,9 @@ def _suggest(p, root) -> str:
 
 def read_file(ctx: ToolContext, path: str, start_line: int = 0, end_line: int = 0) -> str:
     p = ctx.resolve(path)
-    if PROTECTED.search(str(p)):
-        raise ToolError(f"protected file (secrets): {path}")
+    why = secret_reason(p, sniff=False)
+    if why:
+        raise ToolError(f"protected file ({why}): {path}")
     if p.is_dir():
         raise ToolError(f"{path} is a directory; use list_dir to see its contents.")
     if not p.is_file():
@@ -50,8 +51,9 @@ def read_file(ctx: ToolContext, path: str, start_line: int = 0, end_line: int = 
 
 def count_words(ctx: ToolContext, path: str) -> str:
     p = ctx.resolve(path)
-    if PROTECTED.search(str(p)):
-        raise ToolError(f"protected file (secrets): {path}")
+    why = secret_reason(p, sniff=False)
+    if why:
+        raise ToolError(f"protected file ({why}): {path}")
     if not p.is_file():
         raise ToolError(f"file not found: {path}." + _suggest(p, ctx.root))
     text = p.read_text(errors="replace")
@@ -68,8 +70,9 @@ def list_dir(ctx: ToolContext, path: str = ".") -> str:
 
 def write_file(ctx: ToolContext, path: str, content: str) -> str:
     p = ctx.resolve(path)
-    if PROTECTED.search(str(p)):
-        raise ToolError(f"protected file (secrets): {path}")
+    why = secret_reason(p, sniff=False)
+    if why:
+        raise ToolError(f"protected file ({why}): {path}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
     return f"wrote {len(content)} chars to {path}"
@@ -77,8 +80,9 @@ def write_file(ctx: ToolContext, path: str, content: str) -> str:
 
 def edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
     p = ctx.resolve(path)
-    if PROTECTED.search(str(p)):
-        raise ToolError(f"protected file (secrets): {path}")
+    why = secret_reason(p, sniff=False)
+    if why:
+        raise ToolError(f"protected file ({why}): {path}")
     text = p.read_text()
     if text.count(old) == 1:
         p.write_text(text.replace(old, new))
@@ -110,7 +114,12 @@ def _names_protected_file(command: str, root=None) -> bool:
     return any(PROTECTED.search(t) or (root is not None and expands_to_protected(t, root)) for t in parts)
 
 
+HARD_LINK = re.compile(r"(^|[;&|(`]|\$\()\s*(sudo\s+)?(command\s+)?(/\S*/)?ln\b(?![^;&|]*(\s-[a-zA-Z]*s|--symbolic))")
+
+
 def run_shell(ctx: ToolContext, command: str) -> str:
+    if HARD_LINK.search(command):
+        raise ToolError("hard links are not allowed (a hard link can alias a secret file outside the workspace); use `ln -s` or copy")
     if _names_protected_file(command, ctx.root):
         raise ToolError("command refers to a protected secrets file (.env, keys); not allowed")
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}

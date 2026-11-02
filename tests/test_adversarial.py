@@ -283,3 +283,53 @@ def test_pinned_transport_allow_list_and_dns_failure(monkeypatch):
 def test_default_client_uses_the_pinned_transport(tmp_path):
     c = web._http(ToolContext(tmp_path))
     assert isinstance(c._transport, web.PinnedTransport)
+
+
+# --- the two disguises a file name cannot catch: hard links and secrets under innocent names ---
+
+def _tok(*pieces):
+    return "".join(pieces)
+
+
+def test_hard_link_to_a_file_outside_is_treated_as_secret(tmp_path):
+    from agentic.safety.protected import secret_reason, walk_files
+    outside, root = tmp_path / "outside.txt", tmp_path / "w"
+    root.mkdir()
+    outside.write_text("private")
+    (root / "notes.txt").hardlink_to(outside)
+    (root / "plain.txt").write_text("fine")
+    assert "hard link" in secret_reason(root / "notes.txt")
+    assert secret_reason(root / "plain.txt") is None
+    assert [f.name for f in walk_files(root)] == ["plain.txt"]
+    ctx = ToolContext(root, 5, False, False)
+    with pytest.raises(ToolError, match="hard link"):
+        builtin.read_file(ctx, "notes.txt")
+    with pytest.raises(ToolError, match="hard link"):
+        builtin.write_file(ctx, "notes.txt", "overwrite")  # writing through the link would change the outside file
+    assert outside.read_text() == "private"
+
+
+def test_secret_contents_under_an_innocent_name_are_hidden_from_scans_and_shell(tmp_path):
+    from agentic.safety.protected import find_protected, secret_reason, walk_files
+    key = _tok("-----BEGIN RSA ", "PRIVATE KEY-----\nabc\n-----END RSA ", "PRIVATE KEY-----\n")
+    (tmp_path / "backup.dat").write_text(key)
+    (tmp_path / "notes.txt").write_text("token " + _tok("gh", "p_", "a" * 36))
+    (tmp_path / "ok.txt").write_text("nothing here")
+    assert "private key" in secret_reason(tmp_path / "backup.dat")
+    assert {f.name for f in find_protected(tmp_path)} == {"backup.dat", "notes.txt"}
+    assert [f.name for f in walk_files(tmp_path)] == ["ok.txt"]
+    hits = dev.grep(ToolContext(tmp_path, 5, False, False), "BEGIN|nothing|ghp")
+    assert "ok.txt" in hits and "backup.dat" not in hits and "notes.txt" not in hits
+    out = builtin.read_file(ToolContext(tmp_path, 5, False, False), "backup.dat")
+    assert "abc" not in out  # a direct read is still redacted, not an error
+
+
+@pytest.mark.parametrize("cmd", ["ln secret.txt x", "ln -f /etc/hosts x", "echo hi; ln a b", "sudo ln a b", "/bin/ln a b", "true && ln a b", "x=$(ln a b)"])
+def test_shell_hard_links_are_refused(cmd, tmp_path):
+    with pytest.raises(ToolError, match="hard links"):
+        builtin.run_shell(ToolContext(tmp_path, 5, False, False), cmd)
+
+
+@pytest.mark.parametrize("cmd", ["ln -s a b", "ln -sf a b", "ln --symbolic a b", "echo lnx", "cat line.txt", "echo ln"])
+def test_symlinks_and_lookalikes_are_not_flagged_as_hard_links(cmd):
+    assert not builtin.HARD_LINK.search(cmd)
