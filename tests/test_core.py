@@ -838,3 +838,38 @@ def test_long_read_spiral_gets_a_write_nudge(tmp_path):
     run("t", Profile("r", "sys", ["read_file"], max_steps=15), Spy(reads + [{"content": "done"}]), default_registry(),
         Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "b.jsonl"))
     assert not any("without writing" in m for m in seen)
+
+
+@pytest.mark.parametrize("headers,want", [({"retry-after": "7"}, 7.0), ({"x-ratelimit-reset-tokens": "697ms"}, 0.697),
+                                          ({"x-ratelimit-reset-requests": "1m26.4s", "x-ratelimit-reset-tokens": "2s"}, 2.0),
+                                          ({"x-ratelimit-reset-requests": "2h3m"}, 7380.0), ({}, None), ({"retry-after": "soon"}, None)])
+def test_rate_limit_wait_parses_provider_headers(headers, want):
+    from agentic.router import rate_limit_wait
+    assert rate_limit_wait(httpx.Headers(headers)) == pytest.approx(want) if want is not None else rate_limit_wait(httpx.Headers(headers)) is None
+
+
+def test_short_rate_limit_is_waited_out_on_the_preferred_provider():
+    hits, sleeps = [], []
+
+    def handler(req):
+        hits.append(req.url.host)
+        if req.url.host == "strong" and len([h for h in hits if h == "strong"]) == 1:
+            return httpx.Response(429, headers={"x-ratelimit-reset-tokens": "3s"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": req.url.host}}]})
+    r = Router([Provider("strong", "http://strong/v1", "m"), Provider("weak", "http://weak/v1", "m")],
+               httpx.Client(transport=httpx.MockTransport(handler)), sleep=sleeps.append)
+    assert r.chat([]).provider == "strong" and sleeps == [3.5] and "weak" not in hits
+
+
+def test_long_rate_limit_blocks_for_as_long_as_the_provider_says():
+    now = [0.0]
+
+    def handler(req):
+        if req.url.host == "strong":
+            return httpx.Response(429, headers={"retry-after": "600"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+    r = Router([Provider("strong", "http://strong/v1", "m"), Provider("weak", "http://weak/v1", "m")],
+               httpx.Client(transport=httpx.MockTransport(handler)), clock=lambda: now[0], sleep=lambda s: None)
+    assert r.chat([]).provider == "weak"
+    now[0] = 300  # past the old fixed 30 s cooldown, still inside the provider's 600 s
+    assert r.chat([]).provider == "weak" and r._blocked_until["strong"] == 600

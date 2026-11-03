@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 
@@ -13,6 +14,25 @@ from .textmode import parse_reply, to_text_messages
 
 RETRYABLE = {408, 429, 500, 502, 503, 504, 529}
 AUTH_FAILED = {401, 403}
+SHORT_WAIT = 15.0  # a rate limit that clears within this many seconds is waited out on the same (preferred) provider
+DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+
+
+def rate_limit_wait(headers) -> float | None:
+    """Seconds until a rate-limited provider accepts requests again, from retry-after or Groq/OpenAI-style
+    x-ratelimit-reset-* headers ("1m26.4s", "697ms"). None if the provider does not say."""
+    try:
+        if headers.get("retry-after"):
+            return float(headers["retry-after"])
+    except ValueError:
+        pass
+    waits = []
+    for name in ("x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        parts = DURATION.findall(headers.get(name) or "")
+        if parts:
+            unit = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
+            waits.append(sum(float(n) * unit[u] for n, u in parts))
+    return min(waits) if waits else None
 
 
 def normalize(msg: dict) -> dict:
@@ -95,7 +115,13 @@ class Router:
             try:
                 return self._call(p, messages, tools)
             except _Skip as e:
-                self._blocked_until[p.name] = self.clock() + self.cooldown
+                if e.wait is not None and e.wait <= SHORT_WAIT:  # a per-minute limit: wait, keep the stronger model
+                    self.sleep(e.wait + 0.5)
+                    try:
+                        return self._call(p, messages, tools)
+                    except _Skip as again:
+                        e = again
+                self._blocked_until[p.name] = self.clock() + (e.wait if e.wait is not None else self.cooldown)
                 errors.append(f"{p.name}: {e}")
                 retryable = retryable or e.transient
         raise RouterError("all providers failed: " + "; ".join(errors), retryable)
@@ -122,7 +148,8 @@ class Router:
         except httpx.HTTPError as e:
             raise _Skip(f"unreachable ({type(e).__name__})", transient=True) from e
         if r.status_code in RETRYABLE:
-            raise _Skip(f"HTTP {r.status_code}", transient=True)
+            raise _Skip(f"HTTP {r.status_code}", transient=True,
+                        wait=rate_limit_wait(r.headers) if r.status_code == 429 else None)
         if r.status_code in AUTH_FAILED:
             raise _Skip(f"HTTP {r.status_code}")
         if r.status_code == 413:
@@ -148,6 +175,7 @@ class Router:
 class _Skip(Exception):
     """Provider failed in a way that justifies trying the next one."""
 
-    def __init__(self, msg: str, transient: bool = False):
+    def __init__(self, msg: str, transient: bool = False, wait: float | None = None):
         super().__init__(msg)
         self.transient = transient
+        self.wait = wait  # seconds the provider asked us to wait (429), if it said
