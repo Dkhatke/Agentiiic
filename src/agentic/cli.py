@@ -14,7 +14,7 @@ from .embeddings import Embedder
 from .judge import make_judge
 from .router import Router, RouterError
 from .store import Store
-from .tools import ToolContext, default_registry
+from .tools import ToolContext, ToolError, default_registry
 
 
 def _ask(summary: str) -> bool:
@@ -101,6 +101,70 @@ def cmd_eval(args) -> int:
     return 0 if passed == len(tasks) else 1
 
 
+def cmd_project(args) -> int:
+    from . import project as pj
+    cfg = load_config()
+    store = Store()
+    root = Path(args.workspace).resolve()
+    router = Router(cfg.providers, store=store)
+    ctx = ToolContext(root, cfg.limits.shell_timeout, cfg.sandbox.enabled, cfg.sandbox.network, store=store,
+                      embedder=Embedder(cfg.embeddings) if cfg.embeddings.usable else None,
+                      searxng_url=cfg.search.searxng_url, sandbox_image=cfg.sandbox.docker_image)
+    saved = pj.load(root)
+    if args.status or args.cont:
+        if not saved:
+            print(f"no project plan in {root / pj.PLAN_FILE}")
+            return 1
+        spec, conventions, plan = saved
+        print(pj.describe(plan, conventions))
+        if args.status:
+            return 0
+    else:
+        if not args.spec:
+            print('give a spec: agentic project "what to build" (or --continue / --status)')
+            return 1
+        spec = args.spec
+        planners = sorted(cfg.providers, key=lambda p: p.name != cfg.project.planner) if cfg.project.planner else cfg.providers
+        planner = Router(planners, store=store)
+        print("planning milestones...")
+        try:
+            conventions, plan = pj.make_plan(spec, lambda prompt: planner.chat([{"role": "user", "content": prompt}]).message.get("content") or "")
+        except (RouterError, ToolError) as e:
+            print(f"error: {e}")
+            return 1
+        print(pj.describe(plan, conventions))
+        git_note = "commit each passing milestone" + ("" if pj.is_repo(root) else " (after running git init here)")
+        if not _ask(f"Run this plan? Each check command runs in the sandbox without asking again, and I will {git_note}. "
+                    "File writes and other commands still ask."):
+            print("plan not started")
+            return 1
+        pj.save(root, spec, plan, conventions)
+    try:
+        print(pj.prepare_git(ctx, "agentic/project"))
+    except ToolError as e:
+        print(f"no git checkpoints: {e}")
+    profile = load_profile("builder")
+    profile.max_steps = min(pj.MILESTONE_STEPS, cfg.limits.max_steps)
+    gate = Gate(Mode(args.mode or "ask-on-write"), _ask)
+
+    def worker(task: str) -> str:
+        tid = store.create_task(task[:200], profile.name, str(root))
+        return run(task, profile, router, default_registry(), gate, ctx, Audit(), cfg.limits.max_model_calls,
+                   on_event=lambda e: print(f"  · {e}"), store=store, task_id=tid)
+
+    def ask_stuck(m, output: str) -> str:
+        print(f"\nMilestone '{m.title}' still fails its check after {pj.ATTEMPTS} tries:\n{output}")
+        return input("Type a one-line hint to try again, or s = skip, u = undo changes and retry, q = stop: ")
+
+    try:
+        print("\n" + pj.run_project(spec, plan, ctx, worker, ask_stuck, conventions=conventions))
+    except RouterError as e:
+        pj.save(root, spec, plan, conventions)
+        print(f"error: {e}\nprogress is saved; continue later with: agentic project --continue")
+        return 1
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from .mcp_server import serve
     serve(Path(args.workspace))
@@ -167,6 +231,13 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--profile", default="builder")
     ev.add_argument("--only", nargs="*")
     ev.set_defaults(fn=cmd_eval)
+    pr = sub.add_parser("project", help="build a medium project milestone by milestone, with checks and git checkpoints")
+    pr.add_argument("spec", nargs="?", default="")
+    pr.add_argument("--workspace", default=".")
+    pr.add_argument("--continue", dest="cont", action="store_true", help="resume the saved plan")
+    pr.add_argument("--status", action="store_true", help="show the saved plan")
+    pr.add_argument("--mode", default=None, choices=[m.value for m in Mode])
+    pr.set_defaults(fn=cmd_project)
     mc = sub.add_parser("mcp", help="MCP server (stdio, read-only tools) for editors")
     mc.add_argument("--workspace", default=".")
     mc.set_defaults(fn=cmd_mcp)

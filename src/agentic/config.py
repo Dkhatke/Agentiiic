@@ -68,6 +68,16 @@ base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "openrouter/free"   # OpenRouter picks any available free model
 
+# Google AI Studio key (free: ~250 requests/day, Flash models only). Free-tier prompts may be used by Google to improve
+# its products, so it is last in the chain; it is a good planner for `agentic project` (see [project] below).
+[[providers]]
+name = "gemini"
+quota = "gemini"
+daily_calls = 240
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-3.8-flash"
+
 [[providers]]
 name = "ollama"
 base_url = "http://localhost:11434/v1"
@@ -90,6 +100,9 @@ network = false                    # true lets shell commands reach the internet
 
 # [judge]                          # which provider scores the ideator's ideas (default: not the chain's first)
 # provider = "groq-qwen"
+
+# [project]                        # `agentic project`: which provider splits the spec into milestones
+# planner = "gemini"               # default: the chain's first; the builder always uses the normal chain
 
 # [search]
 # searxng_url = "http://localhost:8080"   # self-hosted SearXNG replaces DuckDuckGo scraping
@@ -156,6 +169,11 @@ class Sandbox:
 
 
 @dataclass
+class ProjectConfig:
+    planner: str = ""  # provider that plans milestones; empty = the chain's first
+
+
+@dataclass
 class Judge:
     provider: str = ""  # name of the provider that scores ideas; empty = a different one from the chain's first
 
@@ -173,6 +191,7 @@ class Config:
     embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     search: Search = field(default_factory=Search)
     judge: Judge = field(default_factory=Judge)
+    project: ProjectConfig = field(default_factory=ProjectConfig)
 
 
 ENV_FILES = [Path(__file__).resolve().parents[2] / ".env", CONFIG_PATH.parent / ".env"]  # the agentic repo, then ~/.config/agentic
@@ -205,4 +224,5 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         embeddings=EmbeddingConfig(**data.get("embeddings", {})),
         search=Search(**data.get("search", {})),
         judge=Judge(**data.get("judge", {})),
+        project=ProjectConfig(**data.get("project", {})),
     )
