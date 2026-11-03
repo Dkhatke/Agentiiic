@@ -28,7 +28,9 @@ no network, that exits 0 only when the milestone works (usually a test command s
 the milestone itself should write those tests). Do not include setup that needs the internet (pip install, npm install).
 Each milestone is built in a fresh session that cannot see your plan's reasoning, so also write `conventions`: the decisions
 every milestone must follow so their pieces fit: file and module names, exact command line syntax (where options go), main
-function names and signatures, data format or table schema, and how tests should run the code.
+function names and signatures, data format or table schema, and how tests should run the code. Tests must never share or
+touch the real data file: the code takes its data path from an option or environment variable, and every test uses a fresh
+temporary one. Tests should compare output with whitespace stripped.
 Reply with ONLY a JSON object, no prose:
 {{"conventions": "...", "milestones": [{{"title": "short name", "goal": "what to build and how it should behave", "check": "shell command"}}]}}
 

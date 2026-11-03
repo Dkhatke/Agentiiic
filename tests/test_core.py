@@ -481,7 +481,7 @@ def test_edit_file_tolerates_whitespace_and_hints(tmp_path):
     assert "return 10" in f.read_text() and "def g" in f.read_text()
     with pytest.raises(ToolError) as e:
         edit_file(ctx(tmp_path), "a.py", "def gg():\n    return 2", "x")
-    assert "Closest line" in str(e.value)
+    assert "Closest match" in str(e.value) and "def g():" in str(e.value)
     f.write_text("x = 1\nx = 1\n")
     with pytest.raises(ToolError):
         edit_file(ctx(tmp_path), "a.py", "x = 1", "x = 2")       # ambiguous
@@ -810,3 +810,31 @@ def test_same_failure_three_times_gets_a_think_nudge(tmp_path):
         Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
     # counted across other commands and despite exit 0; an edit resets the count
     assert ["same failure" in m for m in seen] == [False, False, False, False, True, False, False]
+
+
+def test_failed_edit_shows_the_real_text_to_copy(tmp_path):
+    from agentic.tools import builtin
+    (tmp_path / "a.py").write_text("def main():\n    args = parse()\n    if args.cmd == 'add':\n        add()\n    return 0\n")
+    with pytest.raises(ToolError) as e:
+        builtin.edit_file(ctx(tmp_path), "a.py", "    if args.command == 'add':\n        add()", "x")
+    msg = str(e.value)
+    assert "if args.cmd == 'add':" in msg and "        add()" in msg and "line 3" in msg
+
+
+def test_long_read_spiral_gets_a_write_nudge(tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[-1].get("content") or "")
+            return super().chat(messages, tools)
+    reads = [tool_msg("read_file", {"path": "a.txt", "start_line": i}) for i in range(1, 10)]
+    prof = Profile("t", "sys", ["read_file", "write_file"], max_steps=15)
+    run("t", prof, Spy(reads + [{"content": "done"}]), default_registry(), Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path),
+        Audit(tmp_path / "a.jsonl"))
+    assert ["without writing" in m for m in seen] == [False] * 8 + [True, True]
+    seen.clear()  # a read-only profile is never pushed to write
+    run("t", Profile("r", "sys", ["read_file"], max_steps=15), Spy(reads + [{"content": "done"}]), default_registry(),
+        Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "b.jsonl"))
+    assert not any("without writing" in m for m in seen)

@@ -70,6 +70,7 @@ def list_dir(ctx: ToolContext, path: str = ".") -> str:
     return "\n".join(e.name + ("/" if e.is_dir() else "") for e in entries if e.name != ".git") or "(empty)"
 
 
+EDIT_CONTEXT = 12  # most lines of real file text shown when edit_file's 'old' does not match
 LINE_NUMBER = re.compile(r"^\s*\d+\t")
 
 
@@ -114,9 +115,11 @@ def edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
         raise ToolError("'old' matches more than once; include more surrounding lines to make it unique")
     close = difflib.get_close_matches(want[0].strip(), [l.strip() for l in lines], n=1, cutoff=0.6)
     hint = ""
-    if close:
+    if close:  # show the real text there, so the next try copies it instead of recalling it
         n = next(i for i, l in enumerate(lines, 1) if l.strip() == close[0])
-        hint = f" Closest line is {n}: {close[0][:120]!r}. Re-read the file and copy the text exactly."
+        a, b = max(n - 2, 0), min(n - 1 + max(len(want), 1) + 2, len(lines), n - 1 + EDIT_CONTEXT)
+        hint = (f" Closest match starts at line {n}. The file actually says (lines {a + 1}-{b}):\n"
+                + "\n".join(lines[a:b]) + "\nCopy 'old' exactly from this text (or use write_file for a full rewrite).")
     raise ToolError("'old' not found." + hint)
 
 

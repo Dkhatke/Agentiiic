@@ -34,6 +34,10 @@ FAIL_STREAK = 3           # times the same failure verdict is seen without any f
 FAIL_NUDGE = ("\n\n[note: you have now seen this same failure {n} times without changing any file. Re-running will not change it. "
               "Read the failing line and decide whether the code or the test itself is wrong, then fix that.]")
 FAILED_RE = re.compile(r"\b(failed|errors?|error:)\b", re.I)
+READ_STREAK = 8           # read-only calls in a row, in a profile that can write, before we push it to start writing
+READ_NUDGE = ("\n\n[note: that is {n} reads in a row without writing anything. You have enough context: make the change "
+              "now (write_file / edit_file), then run the check. Re-reading the same files will not help.]")
+READ_TOOLS = {"read_file", "list_dir", "repo_map", "grep", "semantic_search"}
 SEARCH_STREAK = 3         # web searches in a row without reading a page before we push the model to read
 SEARCH_NUDGE = ("\n\n[note: you have searched {n} times in a row without reading any page. Search results are only titles; "
                 "fetch_url the most relevant result above now instead of searching again.]")
@@ -122,6 +126,7 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
     dirty, nudged = False, set()  # dirty: files changed since the last command ran; nudged: one-shot checks used
     searches = 0  # web_search calls since the last fetch_url (small models keep rephrasing instead of reading)
     changed: list[str] = []  # files written, for the summary if the model gives none
+    reads = 0  # read-only calls since the last write or command (small models can explore forever)
     last_run, fails = None, Counter()  # last shell command and result; failure verdicts seen since the last file edit
     for step in range(profile.max_steps):
         if getattr(router, "calls", 0) - calls_at_start >= max_model_calls:
@@ -168,6 +173,10 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             if name == "web_search" and searches >= SEARCH_STREAK and "fetch_url" in profile.tools:
                 result += SEARCH_NUDGE.format(n=searches)
                 audit.record("search_nudge", searches=searches)
+            reads = reads + 1 if name in READ_TOOLS else 0
+            if reads >= READ_STREAK and WRITE_TOOLS & set(profile.tools):
+                result += READ_NUDGE.format(n=reads)
+                audit.record("read_nudge", reads=reads)
             if name == "run_shell" and result.startswith("exit="):
                 last_run, verdict = (_args(call).get("command", ""), result), _tail(result)
                 if verdict and (not result.startswith("exit=0") or FAILED_RE.search(verdict)):  # `| head` hides the exit code
