@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import __version__
 from .audit import Audit
-from .config import CONFIG_PATH, SAMPLE_CONFIG, load_config
+from .config import CONFIG_PATH, SAMPLE_CONFIG, load_config, load_env
 from .loop import run
 from .permissions import Gate, Mode
 from .orchestrator import select_profile
@@ -179,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     dr.add_argument("--workspace", default=".")
     dr.set_defaults(fn=cmd_doctor)
     args = ap.parse_args(argv)
+    load_env()
     return args.fn(args)
 
 

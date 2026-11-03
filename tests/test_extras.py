@@ -1,4 +1,5 @@
 import os
+import os
 import json
 import sys
 from pathlib import Path
@@ -395,3 +396,17 @@ def test_router_skips_a_provider_that_answers_with_html():
         return httpx.Response(200, json={"choices": [{"message": {"content": "fine"}}]})
     r = Router([p, ok], httpx.Client(transport=httpx.MockTransport(handler)))
     assert r.chat([{"role": "user", "content": "hi"}]).provider == "b"
+
+
+def test_load_env_reads_keys_without_overriding_and_ignores_junk(tmp_path, monkeypatch):
+    from agentic.config import load_env
+    f = tmp_path / ".env"
+    f.write_text("# c\nAGX_A=one\nexport AGX_B='two'\nAGX_C=\nAGX_SET=new\nbad line\n=x\n")
+    monkeypatch.setenv("AGX_SET", "old")
+    for k in ("AGX_A", "AGX_B", "AGX_C"):
+        monkeypatch.delenv(k, raising=False)
+    assert load_env([f, tmp_path / "missing"]) == [f]
+    assert (os.environ["AGX_A"], os.environ["AGX_B"], os.environ["AGX_SET"]) == ("one", "two", "old")
+    assert "AGX_C" not in os.environ  # an empty placeholder does not count as a key
+    for k in ("AGX_A", "AGX_B"):
+        monkeypatch.delenv(k)

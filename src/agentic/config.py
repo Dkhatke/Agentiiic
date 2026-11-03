@@ -167,6 +167,27 @@ class Config:
     judge: Judge = field(default_factory=Judge)
 
 
+ENV_FILES = [Path(__file__).resolve().parents[2] / ".env", CONFIG_PATH.parent / ".env"]  # the agentic repo, then ~/.config/agentic
+
+
+def load_env(files: list[Path] | None = None) -> list[Path]:
+    """Put KEY=VALUE lines from the agentic .env into this process's environment. Variables already set win, and the
+    workspace's own .env is never read here (it holds the app's secrets, not the agent's). Returns the files used."""
+    used = []
+    for f in files if files is not None else ENV_FILES:
+        try:
+            lines = f.read_text().splitlines()
+        except OSError:
+            continue
+        used.append(f)
+        for line in lines:
+            key, sep, value = line.strip().removeprefix("export ").partition("=")
+            key, value = key.strip(), value.strip().strip("\"'")
+            if sep and key.isidentifier() and value and key not in os.environ:
+                os.environ[key] = value
+    return used
+
+
 def load_config(path: Path = CONFIG_PATH) -> Config:
     data = tomllib.loads(path.read_text()) if path.exists() else tomllib.loads(SAMPLE_CONFIG)
     return Config(
