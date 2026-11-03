@@ -731,3 +731,19 @@ def test_bad_tool_arguments_get_a_helpful_error(tmp_path):
         Audit(tmp_path / "a.jsonl"))
     log = (tmp_path / "a.jsonl").read_text()
     assert "tool_error" in log
+
+
+def test_search_streak_pushes_the_model_to_read(tmp_path, monkeypatch):
+    reg = default_registry()
+    monkeypatch.setattr(reg.get("web_search"), "func", lambda ctx, query, **k: "1. Quillfish https://q.example/readme")
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[-1].get("content") or "")
+            return super().chat(messages, tools)
+    prof = Profile("r", "sys", ["web_search", "fetch_url"], max_steps=10)
+    router = Spy([tool_msg("web_search", {"query": f"q{i}"}) for i in range(4)] + [{"content": "done"}])
+    run("t", prof, router, reg, Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    flagged = ["without reading any page" in m for m in seen]
+    assert flagged == [False, False, False, True, True]  # after the 3rd and 4th search, not before

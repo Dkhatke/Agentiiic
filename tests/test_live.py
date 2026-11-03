@@ -8,11 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from agentic.config import load_config
+from agentic.config import load_config, load_env
 from agentic.safety import sandbox
 from agentic.tools import ToolContext, ToolError
 from agentic.tools import web
 from agentic.tools.builtin import run_shell
+
+if os.environ.get("AGENTIC_LIVE") == "1":
+    load_env()  # keys from the gitignored .env, like the CLI
 
 pytestmark = pytest.mark.skipif(os.environ.get("AGENTIC_LIVE") != "1", reason="set AGENTIC_LIVE=1 to run live checks")
 needs_sandbox = pytest.mark.skipif(not sandbox.available(), reason="macOS sandbox-exec only")

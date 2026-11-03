@@ -30,6 +30,9 @@ VERIFY_NUDGE = ("You changed files but have not run anything since. Verify now: 
 FINAL_STEP = ("This is your last step. Do not call any more tools. Answer now using what you have found, "
               "and state clearly what is still unverified or unfinished.")
 MIN_STEPS_FOR_FORCED_ANSWER = 4
+SEARCH_STREAK = 3         # web searches in a row without reading a page before we push the model to read
+SEARCH_NUDGE = ("\n\n[note: you have searched {n} times in a row without reading any page. Search results are only titles; "
+                "fetch_url the most relevant result above now instead of searching again.]")
 PLAN_REQUEST = ("Before acting, write a short numbered plan (at most 6 steps) that ends with how you will verify the result. "
                 "Do not call tools yet.")
 
@@ -113,6 +116,7 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             messages.append({"role": "assistant", "content": plan})
             on_event("plan: " + plan.splitlines()[0][:100])
     dirty, nudged = False, set()  # dirty: files changed since the last command ran; nudged: one-shot checks used
+    searches = 0  # web_search calls since the last fetch_url (small models keep rephrasing instead of reading)
     for step in range(profile.max_steps):
         if getattr(router, "calls", 0) - calls_at_start >= max_model_calls:
             audit.record("budget_stop", reason="max_model_calls")
@@ -147,9 +151,13 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             return msg.get("content") or ("Stopped: step limit reached." if last else "")
         for call in calls:
             result = _execute(call, profile, registry, gate, ctx, audit, on_event, seen)
+            name = call["function"]["name"]
+            searches = searches + 1 if name == "web_search" else (0 if name == "fetch_url" else searches)
+            if name == "web_search" and searches >= SEARCH_STREAK and "fetch_url" in profile.tools:
+                result += SEARCH_NUDGE.format(n=searches)
+                audit.record("search_nudge", searches=searches)
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
             if not result.startswith(("error", "denied")):
-                name = call["function"]["name"]
                 dirty = True if name in WRITE_TOOLS else (False if name == "run_shell" else dirty)
         save("running")
 
