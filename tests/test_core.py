@@ -873,3 +873,22 @@ def test_long_rate_limit_blocks_for_as_long_as_the_provider_says():
     assert r.chat([]).provider == "weak"
     now[0] = 300  # past the old fixed 30 s cooldown, still inside the provider's 600 s
     assert r.chat([]).provider == "weak" and r._blocked_until["strong"] == 600
+
+
+def test_a_provider_that_trickles_bytes_forever_is_abandoned():
+    import time as _t
+
+    class Trickle(httpx.SyncByteStream):
+        def __iter__(self):
+            while True:  # keep-alive whitespace, never a full answer
+                _t.sleep(0.05)
+                yield b" "
+
+    def handler(req):
+        if req.url.host == "slow":
+            return httpx.Response(200, stream=Trickle())
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+    r = Router([Provider("slow", "http://slow/v1", "m"), Provider("fast", "http://fast/v1", "m")],
+               httpx.Client(transport=httpx.MockTransport(handler)), deadline=0.3, sleep=lambda s: None)
+    start = _t.monotonic()
+    assert r.chat([]).provider == "fast" and _t.monotonic() - start < 3

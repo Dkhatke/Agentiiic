@@ -14,6 +14,7 @@ from .textmode import parse_reply, to_text_messages
 
 RETRYABLE = {408, 429, 500, 502, 503, 504, 529}
 AUTH_FAILED = {401, 403}
+REQUEST_DEADLINE = 180.0  # whole-answer limit; a read timeout alone never fires on servers that send keep-alive bytes
 SHORT_WAIT = 15.0  # a rate limit that clears within this many seconds is waited out on the same (preferred) provider
 DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
 
@@ -73,9 +74,9 @@ class Reply:
 class Router:
     def __init__(self, providers: list[Provider], client: httpx.Client | None = None,
                  cooldown: float = 30.0, clock=time.monotonic, store=None, retries: int = 2,
-                 sleep=time.sleep, max_wait: float = 45.0):
+                 sleep=time.sleep, max_wait: float = 45.0, deadline: float = REQUEST_DEADLINE):
         self.store = store
-        self.retries, self.sleep, self.max_wait = retries, sleep, max_wait
+        self.retries, self.sleep, self.max_wait, self.deadline = retries, sleep, max_wait, deadline
         self.providers = [p for p in providers if p.usable]
         self.client = client or httpx.Client(timeout=120)
         self.cooldown = cooldown
@@ -144,7 +145,7 @@ class Router:
         if self.store:
             self.store.add_usage(p.quota or p.name, calls=1)
         try:
-            r = self.client.post(url, json=body, headers=headers)
+            r = self._post(url, body, headers)
         except httpx.HTTPError as e:
             raise _Skip(f"unreachable ({type(e).__name__})", transient=True) from e
         if r.status_code in RETRYABLE:
@@ -170,6 +171,17 @@ class Router:
             raise _Skip("malformed response")
         msg = normalize(msg)
         return Reply(parse_reply(msg) if text_mode else msg, p.name, usage)
+
+
+    def _post(self, url: str, body: dict, headers: dict) -> httpx.Response:
+        """POST and read the whole answer, giving up after self.deadline seconds even if bytes keep trickling in."""
+        start, chunks = time.monotonic(), []
+        with self.client.stream("POST", url, json=body, headers=headers) as r:
+            for chunk in r.iter_bytes():
+                chunks.append(chunk)
+                if time.monotonic() - start > self.deadline:
+                    raise _Skip(f"no complete answer within {self.deadline:.0f}s", transient=True)
+            return httpx.Response(r.status_code, headers=r.headers, content=b"".join(chunks), request=r.request)
 
 
 class _Skip(Exception):
