@@ -29,6 +29,14 @@ model = "qwen/qwen3.8-27b"   # fallback
 max_input_tokens = 7000            # Groq free tier ITPM limit for this model
 
 [[providers]]
+name = "nvidia"
+quota = "nvidia"
+daily_calls = 900                  # NVIDIA NIM free tier: ~40 requests/min, ~1,000/day (build.nvidia.com)
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key_env = "NVIDIA_API_KEY"
+model = "nvidia/nemotron-3.5-lightning-30b-a3b"   # fast, tool calling, no training on your data
+
+[[providers]]
 name = "or-coder"
 quota = "openrouter"
 daily_calls = 45                   # OpenRouter free tier: 50 requests/day per account
