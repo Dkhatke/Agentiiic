@@ -30,6 +30,10 @@ VERIFY_NUDGE = ("You changed files but have not run anything since. Verify now: 
 FINAL_STEP = ("This is your last step. Do not call any more tools. Answer now using what you have found, "
               "and state clearly what is still unverified or unfinished.")
 MIN_STEPS_FOR_FORCED_ANSWER = 4
+FAIL_STREAK = 3           # times the same failure verdict is seen without any file edit before we tell the model to stop and think
+FAIL_NUDGE = ("\n\n[note: you have now seen this same failure {n} times without changing any file. Re-running will not change it. "
+              "Read the failing line and decide whether the code or the test itself is wrong, then fix that.]")
+FAILED_RE = re.compile(r"\b(failed|errors?|error:)\b", re.I)
 SEARCH_STREAK = 3         # web searches in a row without reading a page before we push the model to read
 SEARCH_NUDGE = ("\n\n[note: you have searched {n} times in a row without reading any page. Search results are only titles; "
                 "fetch_url the most relevant result above now instead of searching again.]")
@@ -42,8 +46,8 @@ def env_note(ctx: ToolContext) -> str:
     py = "python3" if shutil.which("python3") else ("python" if shutil.which("python") else "no python")
     git = "a git repository" if (ctx.root / ".git").exists() else "not a git repository"
     return (f"\n\nEnvironment: {platform.system()} {platform.machine()}; run Python with `{py}` "
-            f"(`{py} -m pip` for packages); workspace is {git}. Shell commands run in the workspace with no network "
-            f"unless the user enabled it.")
+            f"(`{py} -m pip` for packages); workspace is {git}. Shell commands already start in the workspace folder: use "
+            f"relative paths and do not cd anywhere else (there is no /workspace). No network unless the user enabled it.")
 
 
 def _norm_url(u: str) -> str:
@@ -117,6 +121,8 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             on_event("plan: " + plan.splitlines()[0][:100])
     dirty, nudged = False, set()  # dirty: files changed since the last command ran; nudged: one-shot checks used
     searches = 0  # web_search calls since the last fetch_url (small models keep rephrasing instead of reading)
+    changed: list[str] = []  # files written, for the summary if the model gives none
+    last_run, fails = None, Counter()  # last shell command and result; failure verdicts seen since the last file edit
     for step in range(profile.max_steps):
         if getattr(router, "calls", 0) - calls_at_start >= max_model_calls:
             audit.record("budget_stop", reason="max_model_calls")
@@ -146,9 +152,15 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
                 audit.record("final_nudge", kind=nudge[0])
                 continue
         if not calls:
+            content = msg.get("content")
+            if not content and last:  # some models return nothing when told to stop; ask once more, then summarise ourselves
+                messages.append({"role": "user", "content": FINAL_STEP})
+                content = router.chat(messages, None).message.get("content")
+                if content:
+                    messages.append({"role": "assistant", "content": content})
             audit.record("task_done", steps=step + 1, provider=reply.provider)
             save("done")
-            return msg.get("content") or ("Stopped: step limit reached." if last else "")
+            return content or (fallback_summary(changed, last_run) if last else "")
         for call in calls:
             result = _execute(call, profile, registry, gate, ctx, audit, on_event, seen)
             name = call["function"]["name"]
@@ -156,14 +168,52 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             if name == "web_search" and searches >= SEARCH_STREAK and "fetch_url" in profile.tools:
                 result += SEARCH_NUDGE.format(n=searches)
                 audit.record("search_nudge", searches=searches)
+            if name == "run_shell" and result.startswith("exit="):
+                last_run, verdict = (_args(call).get("command", ""), result), _tail(result)
+                if verdict and (not result.startswith("exit=0") or FAILED_RE.search(verdict)):  # `| head` hides the exit code
+                    fails[verdict] += 1
+                    if fails[verdict] >= FAIL_STREAK:
+                        result += FAIL_NUDGE.format(n=fails[verdict])
+                        audit.record("fail_nudge", runs=fails[verdict])
+            if name in WRITE_TOOLS and not result.startswith(("error", "denied")):
+                path = _args(call).get("path", "")
+                if path and path not in changed:
+                    changed.append(path)
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
             if not result.startswith(("error", "denied")):
                 dirty = True if name in WRITE_TOOLS else (False if name == "run_shell" else dirty)
+                if name in WRITE_TOOLS:  # files changed, so re-running the tests or re-reading a file is progress, not a loop
+                    fails.clear()
+                    for k in [k for k in seen if k[0] not in WRITE_TOOLS]:
+                        del seen[k]
         save("running")
 
     audit.record("budget_stop", reason="max_steps")
     save("stopped")
     return "Stopped: step limit reached."
+
+
+def _args(call) -> dict:
+    try:
+        a = json.loads(call["function"].get("arguments") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return a if isinstance(a, dict) else {}
+
+
+def _tail(result: str) -> str:
+    """The last non-empty line of a command's output: where test runners put the verdict (e.g. '1 failed, 9 passed')."""
+    lines = [l for l in result.splitlines() if l.strip()]
+    return re.sub(r"\d+(\.\d+)?s\b", "", lines[-1]) if lines else ""  # ignore timings like 'in 0.09s'
+
+
+def fallback_summary(changed: list[str], last_run: tuple[str, str] | None) -> str:
+    out = ["Stopped: step limit reached before the model wrote a summary."]
+    out.append("Files changed: " + (", ".join(changed) if changed else "none"))
+    if last_run:
+        out.append(f"Last command: {last_run[0][:200]}\nIts result: {_tail(last_run[1]) or last_run[1][:200]}")
+    out.append("Check the result yourself, or continue with `agentic resume <task id>`.")
+    return "\n".join(out)
 
 
 def _repair(messages: list[dict]) -> list[dict]:

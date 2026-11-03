@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+from pathlib import Path
 
 from ..safety.protected import PROTECTED, expands_to_protected, find_protected, secret_reason
 from ..safety.sandbox import wrap_command
@@ -25,7 +26,8 @@ def _suggest(p, root) -> str:
     return f" Did you mean: {', '.join(near)}?" if near else " Use list_dir to see what exists."
 
 
-def read_file(ctx: ToolContext, path: str, start_line: int = 0, end_line: int = 0) -> str:
+def read_file(ctx: ToolContext, path: str, start_line: int = 0, end_line: int = 0, line_start: int = 0, line_end: int = 0) -> str:
+    start_line, end_line = start_line or line_start, end_line or line_end  # models often guess these names
     p = ctx.resolve(path)
     why = secret_reason(p, sniff=False)
     if why:
@@ -68,8 +70,20 @@ def list_dir(ctx: ToolContext, path: str = ".") -> str:
     return "\n".join(e.name + ("/" if e.is_dir() else "") for e in entries if e.name != ".git") or "(empty)"
 
 
+LINE_NUMBER = re.compile(r"^\s*\d+\t")
+
+
+def _check_numbered(text: str) -> None:
+    """Models sometimes paste a numbered listing back as file content; that would corrupt the file."""
+    lines = [l for l in str(text).splitlines() if l.strip()]
+    if len(lines) >= 3 and sum(bool(LINE_NUMBER.match(l)) for l in lines) >= 0.8 * len(lines):
+        raise ToolError("content starts every line with a line number and a tab, as if copied from a numbered listing; "
+                        "send the plain file text without line numbers")
+
+
 def write_file(ctx: ToolContext, path: str, content: str) -> str:
     p = ctx.resolve(path)
+    _check_numbered(content)
     why = secret_reason(p, sniff=False)
     if why:
         raise ToolError(f"protected file ({why}): {path}")
@@ -80,6 +94,7 @@ def write_file(ctx: ToolContext, path: str, content: str) -> str:
 
 def edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
     p = ctx.resolve(path)
+    _check_numbered(new)
     why = secret_reason(p, sniff=False)
     if why:
         raise ToolError(f"protected file ({why}): {path}")
@@ -117,7 +132,12 @@ def _names_protected_file(command: str, root=None) -> bool:
 HARD_LINK = re.compile(r"(^|[;&|(`]|\$\()\s*(sudo\s+)?(command\s+)?(/\S*/)?ln\b(?![^;&|]*(\s-[a-zA-Z]*s|--symbolic))")
 
 
+FAKE_ROOT = re.compile(r"^\s*cd\s+/workspace/?\s*(&&|;)\s*")
+
+
 def run_shell(ctx: ToolContext, command: str) -> str:
+    if not Path("/workspace").exists():  # models trained on container agents assume this path; we already start in the workspace
+        command = FAKE_ROOT.sub("", command)
     if HARD_LINK.search(command):
         raise ToolError("hard links are not allowed (a hard link can alias a secret file outside the workspace); use `ln -s` or copy")
     if _names_protected_file(command, ctx.root):

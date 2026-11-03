@@ -75,7 +75,7 @@ model = "qwen2.5-coder:3b"         # any model you've pulled; no key needed
 tool_mode = "text"                 # small models often can't do native tool-calling
 
 [limits]
-max_steps = 25
+max_steps = 40                     # the most any profile may use (a profile can ask for fewer)
 max_model_calls = 60
 shell_timeout = 60
 
@@ -143,7 +143,7 @@ class EmbeddingConfig:
 
 @dataclass
 class Limits:
-    max_steps: int = 25
+    max_steps: int = 40
     max_model_calls: int = 60
     shell_timeout: int = 60
 

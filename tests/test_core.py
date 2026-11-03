@@ -747,3 +747,66 @@ def test_search_streak_pushes_the_model_to_read(tmp_path, monkeypatch):
     run("t", prof, router, reg, Gate(Mode.ASK_ON_WRITE, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
     flagged = ["without reading any page" in m for m in seen]
     assert flagged == [False, False, False, True, True]  # after the 3rd and 4th search, not before
+
+
+def test_rerunning_tests_after_an_edit_is_not_a_loop(tmp_path):
+    test = tool_msg("run_shell", {"command": "echo test"})
+    replies = []
+    for i in range(4):  # run, edit, run, edit, ... the same test command 4 times with edits between
+        replies += [test, tool_msg("write_file", {"path": "a.py", "content": f"x = {i}"})]
+    router = ScriptedRouter(replies + [test, {"content": "done"}])
+    prof = Profile("t", "sys", ["write_file", "run_shell"], max_steps=12)
+    run("t", prof, router, default_registry(), Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert '"stuck"' not in (tmp_path / "a.jsonl").read_text()
+    # without edits in between, the third identical call is still stopped
+    router = ScriptedRouter([test, test, test, {"content": "done"}])
+    run("t", prof, router, default_registry(), Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "b.jsonl"))
+    assert '"stuck"' in (tmp_path / "b.jsonl").read_text()
+
+
+def test_line_numbered_content_is_refused(tmp_path):
+    from agentic.tools import builtin
+    c = ctx(tmp_path)
+    with pytest.raises(ToolError, match="line number"):
+        builtin.write_file(c, "a.py", "1\timport os\n2\t\n3\tprint(os.name)\n4\tx = 1\n")
+    assert not (tmp_path / "a.py").exists()
+    builtin.write_file(c, "data.tsv", "id\tname\n1\tann\n2\tbob\n")  # a real TSV with a header is fine
+    builtin.write_file(c, "b.py", "x = 1\n")
+
+
+def test_common_model_slips_are_tolerated(tmp_path):
+    from agentic.tools import builtin
+    c = ctx(tmp_path)
+    (tmp_path / "a.txt").write_text("one\ntwo\nthree\n")
+    assert "two" in builtin.read_file(c, "a.txt", line_start=2, line_end=2) and "one" not in builtin.read_file(c, "a.txt", line_start=2, line_end=2)
+    if not Path("/workspace").exists():
+        assert "exit=0" in builtin.run_shell(c, "cd /workspace && ls a.txt")
+
+
+def test_empty_final_answer_gets_one_retry_then_a_factual_summary(tmp_path):
+    prof = Profile("t", "sys", ["write_file", "run_shell"], max_steps=4)
+    steps = [tool_msg("write_file", {"path": "a.py", "content": "x = 1"}), tool_msg("run_shell", {"command": "echo hi"}),
+             tool_msg("run_shell", {"command": "echo again"})]
+    out = run("t", prof, ScriptedRouter(steps + [{"content": ""}, {"content": "final words"}]), default_registry(),
+              Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    assert out == "final words"
+    out = run("t", prof, ScriptedRouter(steps + [{"content": ""}, {"content": None}]), default_registry(),
+              Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "b.jsonl"))
+    assert "a.py" in out and "echo again" in out and "step limit" in out
+
+
+def test_same_failure_three_times_gets_a_think_nudge(tmp_path):
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[-1].get("content") or "")
+            return super().chat(messages, tools)
+    fail = lambda flag: tool_msg("run_shell", {"command": f"echo '1 failed in 0.0{flag}s'"})  # noqa: E731  exit 0, as after `| tail`
+    other = tool_msg("run_shell", {"command": "echo looking around"})
+    prof = Profile("t", "sys", ["run_shell", "write_file"], max_steps=12)
+    write = tool_msg("write_file", {"path": "a.py", "content": "x = 1"})
+    run("t", prof, Spy([fail(1), other, fail(2), fail(3), write, fail(4), {"content": "done"}]), default_registry(),
+        Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"))
+    # counted across other commands and despite exit 0; an edit resets the count
+    assert ["same failure" in m for m in seen] == [False, False, False, False, True, False, False]

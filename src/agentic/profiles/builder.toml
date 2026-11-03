@@ -1,5 +1,5 @@
 name = "builder"
-max_steps = 25
+max_steps = 40   # build, test, fix, re-test: a real feature took 25+ steps in live runs
 plan = true
 keywords = ["build","code","implement","create","fix","bug","refactor","test","app","project","script","api","feature"]
 tools = ["read_file", "list_dir", "repo_map", "write_file", "edit_file", "run_shell", "git_branch", "git_commit", "load_playbook", "semantic_search", "grep", "remember"]
