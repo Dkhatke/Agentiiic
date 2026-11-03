@@ -892,3 +892,26 @@ def test_a_provider_that_trickles_bytes_forever_is_abandoned():
                httpx.Client(transport=httpx.MockTransport(handler)), deadline=0.3, sleep=lambda s: None)
     start = _t.monotonic()
     assert r.chat([]).provider == "fast" and _t.monotonic() - start < 3
+
+
+def test_a_read_that_hangs_without_any_bytes_is_abandoned():
+    import threading as _th
+    import time as _t
+    release = _th.Event()
+
+    class Hang(httpx.SyncByteStream):
+        def __iter__(self):
+            release.wait(30)  # a blocked TLS read: no bytes, no timeout
+            yield b"{}"
+
+    def handler(req):
+        if req.url.host == "hung":
+            return httpx.Response(200, stream=Hang())
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+    r = Router([Provider("hung", "http://hung/v1", "m"), Provider("fast", "http://fast/v1", "m")],
+               httpx.Client(transport=httpx.MockTransport(handler)), deadline=0.2, sleep=lambda s: None)
+    start = _t.monotonic()
+    try:
+        assert r.chat([]).provider == "fast" and _t.monotonic() - start < 5
+    finally:
+        release.set()

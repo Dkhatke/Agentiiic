@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass
 
@@ -174,7 +175,25 @@ class Router:
 
 
     def _post(self, url: str, body: dict, headers: dict) -> httpx.Response:
-        """POST and read the whole answer, giving up after self.deadline seconds even if bytes keep trickling in."""
+        """POST and read the whole answer within self.deadline seconds. The request runs on a helper thread so the
+        deadline holds even when a server leaves a TLS read hanging (seen live: 44 minutes with no timeout firing)."""
+        box: dict = {}
+
+        def work():
+            try:
+                box["response"] = self._read(url, body, headers)
+            except BaseException as e:  # handed back to the caller's thread
+                box["error"] = e
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+        t.join(self.deadline + 1)
+        if t.is_alive():  # abandon it; the daemon thread dies with its socket
+            raise _Skip(f"no complete answer within {self.deadline:.0f}s", transient=True)
+        if "error" in box:
+            raise box["error"]
+        return box["response"]
+
+    def _read(self, url: str, body: dict, headers: dict) -> httpx.Response:
         start, chunks = time.monotonic(), []
         with self.client.stream("POST", url, json=body, headers=headers) as r:
             for chunk in r.iter_bytes():
