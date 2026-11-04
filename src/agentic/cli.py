@@ -150,7 +150,7 @@ def cmd_project(args) -> int:
     def worker(task: str) -> str:
         tid = store.create_task(task[:200], profile.name, str(root))
         return run(task, profile, router, default_registry(), gate, ctx, Audit(), cfg.limits.max_model_calls,
-                   on_event=lambda e: print(f"  · {e}"), store=store, task_id=tid)
+                   on_event=lambda e: print(f"  · {e}"), store=store, task_id=tid, require_action=True)
 
     def ask_stuck(m, output: str) -> str:
         print(f"\nMilestone '{m.title}' still fails its check after {pj.ATTEMPTS} tries:\n{output}")

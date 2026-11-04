@@ -915,3 +915,20 @@ def test_a_read_that_hangs_without_any_bytes_is_abandoned():
         assert r.chat([]).provider == "fast" and _t.monotonic() - start < 5
     finally:
         release.set()
+
+
+def test_answering_without_any_tool_call_gets_one_idle_nudge(tmp_path):
+    seen = []
+
+    class Spy(ScriptedRouter):
+        def chat(self, messages, tools=None):
+            seen.append(messages[-1].get("content") or "")
+            return super().chat(messages, tools)
+    prof = Profile("t", "sys", ["write_file", "read_file"], max_steps=6)
+    out = run("t", prof, Spy([{"content": "tests/\n  test_tag.py"}, {"content": "still nothing"}]), default_registry(),
+              Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "a.jsonl"), require_action=True)
+    assert sum("not called any tool" in m for m in seen) == 1 and out == "still nothing"  # one nudge, then accept
+    seen.clear()  # without require_action (ordinary questions) a plain answer is fine
+    run("t", prof, Spy([{"content": "answer"}]), default_registry(),
+        Gate(Mode.ASK_ALL, lambda s: True), ctx(tmp_path), Audit(tmp_path / "b.jsonl"))
+    assert not any("not called any tool" in m for m in seen)

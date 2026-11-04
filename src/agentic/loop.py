@@ -27,6 +27,8 @@ CITATION_NUDGE = ("Your answer cites URLs you never fetched, so you cannot know 
 URL_RE = re.compile(r"https?://[^\s)\]>\"'`]+")
 VERIFY_NUDGE = ("You changed files but have not run anything since. Verify now: run the project's tests or the code. "
                 "If you truly cannot verify, say exactly why. Then give your final summary.")
+IDLE_NUDGE = ("You have not called any tool yet, so nothing has been done. Do the task now by calling tools "
+              "(read, write, run); do not describe or imagine the result.")
 FINAL_STEP = ("This is your last step. Do not call any more tools. Answer now using what you have found, "
               "and state clearly what is still unverified or unfinished.")
 MIN_STEPS_FOR_FORCED_ANSWER = 4
@@ -108,7 +110,9 @@ class Profile:
 def run(task: str, profile: Profile, router: Router, registry: Registry, gate: Gate,
         ctx: ToolContext, audit: Audit, max_model_calls: int = 60,
         on_event: Callable[[str], None] = lambda _: None, store=None, task_id: int | None = None,
-        messages: list[dict] | None = None) -> str:
+        messages: list[dict] | None = None, require_action: bool = False) -> str:
+    """require_action: the task must change something (project milestones), so a reply with no tool call at all
+    gets one nudge instead of counting as finished."""
     resuming = bool(messages)
     messages = _repair(messages) if messages else [
         {"role": "system", "content": profile.system_prompt + env_note(ctx) + notes.load(ctx.root)}, {"role": "user", "content": task}]
@@ -124,6 +128,7 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             messages.append({"role": "assistant", "content": plan})
             on_event("plan: " + plan.splitlines()[0][:100])
     dirty, nudged = False, set()  # dirty: files changed since the last command ran; nudged: one-shot checks used
+    used_tools = False  # a model that answers without ever calling a tool has done nothing (seen live)
     searches = 0  # web_search calls since the last fetch_url (small models keep rephrasing instead of reading)
     changed: list[str] = []  # files written, for the summary if the model gives none
     reads = 0  # read-only calls since the last write or command (small models can explore forever)
@@ -145,7 +150,9 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
         calls = [] if last else (msg.get("tool_calls") or [])
         if not calls and not last:
             nudge = None
-            if dirty and "verify" not in nudged and "run_shell" in profile.tools:
+            if require_action and not used_tools and "idle" not in nudged:
+                nudge = ("idle", IDLE_NUDGE)
+            elif dirty and "verify" not in nudged and "run_shell" in profile.tools:
                 nudge = ("verify", VERIFY_NUDGE)
             elif "citations" in profile.checks and "citations" not in nudged:
                 bad = unfetched_urls(msg.get("content") or "", ctx)
@@ -166,6 +173,7 @@ def run(task: str, profile: Profile, router: Router, registry: Registry, gate: G
             audit.record("task_done", steps=step + 1, provider=reply.provider)
             save("done")
             return content or (fallback_summary(changed, last_run) if last else "")
+        used_tools = used_tools or bool(calls)
         for call in calls:
             result = _execute(call, profile, registry, gate, ctx, audit, on_event, seen)
             name = call["function"]["name"]
